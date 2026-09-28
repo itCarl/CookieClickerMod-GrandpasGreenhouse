@@ -53,6 +53,57 @@ The assistant computes the exact expectation - the rival successes are a small
 Poisson-binomial, so convolving the distribution is cheaper than sampling it -
 and scores layouts on what actually lands.
 
+## A parent only counts while it is mature
+
+`getMuts` reads two maps: `neighs`, every neighbour whatever its age, and
+`neighsM`, only those past their own `mature` age. Nearly every recipe keys off
+the second. Scoring a layout as if it were fully grown therefore prices a state
+the garden is rarely in, and prices it wrong by a different factor for each rule.
+
+How much of a replant cycle a plant spends mature is not a detail
+(`node moddev/odds.js` prints all 34):
+
+```
+plant              mature at  steps to grow   grown for
+Thumbcorn                 20              3       73.3%
+Chocoroot                 25              6       68.0%
+Baker's wheat             35              4       53.8%
+Bakeberry                 50             33       47.8%
+Cronerice                 55             73       43.2%
+Shimmerlily               70              9       23.1%
+Queenbeet                 80             67       18.1%
+Duketater                 95            211        3.6%
+Elderwort                 90            164      100.0%   immortal
+```
+
+And the two parents of a recipe rarely grow at the same speed. Elderwort is bred
+from a mature shimmerlily beside a mature cronerice: shimmerlily is grown nine
+steps after planting and dead a few steps later, while cronerice needs
+seventy-three steps just to come of age. Both windows have to be open at once,
+which happens on about a tenth of the steps a snapshot counts.
+
+So a tile is not scored once. For each species around it the number of copies
+currently grown is binomial - independent draws, the honest assumption for
+neighbours on different clocks that are replanted as tiles free up - and every
+state is enumerated and priced by the game's own `getMuts`. A parent a rule
+merely counts (`neighs`, like the three duketaters behind Shriekbulb) costs
+nothing at all. A parent it needs grown costs its odds. Two of them cost both.
+
+The layout search then does the allocation by itself: when one parent is the
+bottleneck, another copy of *it* raises the chance of an overlap far more than
+another copy of the quick one, which a fully-grown snapshot cannot see, because
+in a snapshot three is three.
+
+### The margin before a plant withers is measured in steps
+
+A plant dies at 100, so one worth keeping is taken shortly before that. Measured
+in age, that margin means something different for every species: twelve age is a
+step and a half of baker's wheat but twenty steps of elderwort - and duketater is
+not mature until 95, so a fixed margin took the late bloomers on the first step
+they could breed. The margin is now one of the plant's own growth steps, so
+everything keeps the window it was planted for. It is worth half a species on the
+discovery benchmark in Tend mode alone.
+
 ## Choosing what to work on
 
 The obvious rule is "chase the missing seed with the best odds". It gets stuck,
@@ -82,25 +133,31 @@ maturity.
 
 ## Benchmark
 
-`dev/garden.js` loads the game's real `minigameGarden.js` into a sandbox with a
+`moddev/garden.js` loads the game's real `minigameGarden.js` into a sandbox with a
 seeded PRNG, so this is the game's own growth, spreading and mutation code. The
 only thing being measured is the assistant's choices.
 
 Starting from a fresh save that knows only Baker's wheat, farm level 9:
 
 ```
-node dev/bench.js 3000 5
+node moddev/bench.js 3000 20
 
-3000 garden steps, 5 seeds
+3000 garden steps, 20 seeds
 
                 seeds unlocked of 34
-  Tend mode                     6.4    (per seed: 6, 6, 6, 7, 7)
-  Breed mode                   28.0    (per seed: 28, 28, 28, 28, 28)
+  Tend mode                     6.8
+  Breed mode                   28.6    (per seed: 30, 28, 28, 27, 31, 32, 29,
+                                        29, 28, 32, 14, 28, 32, 29, 29, 31,
+                                        28, 28, 30, 30)
 
-  Breed, steps to reach N species (average)
-   5 by step 188      15 by step 758      25 by step 1613
-  10 by step 669      20 by step 1022
+  Breed, steps to reach N species (every seed)
+   5 by step 189     10 by step 689
 ```
+
+The 14 is real and is not the layout planner: on that seed eleven immortal
+elderwort end up scattered across the plot, the nursery needs bare tiles with no
+neighbours at all, and neither condition can give - so it waits for a weed that
+can never sprout. One seed in twenty, and a known hole.
 
 Tend is not a strawman - it harvests everything mature, which is what banks a
 seed. It still finds only six, because the tree needs specific parents adjacent
@@ -114,7 +171,10 @@ want a dedicated plot and patience. It keeps working on them; do not expect all
 
 ### What the two fixes above were worth
 
-Both were found by this benchmark, and both were real bugs rather than tuning:
+Both were found by this benchmark, and both were real bugs rather than tuning.
+The figures below are historical - they were measured before the harness ran on
+a virtual clock (see below), so they are comparable with each other but not with
+the table above:
 
 ```
                                                  seeds of 34
@@ -136,9 +196,9 @@ than doing almost nothing.
 Hill climbing is a local search, and local search is only as good as where it
 starts. Two recipes proved that the hard way, both found by scoring the
 assistant's layout against the hand-drawn shapes from the community garden
-charts using the same function - the game's own `getMuts` - so the comparison is
-in expected mutations per step rather than in how similar the pictures look
-(`node dev/layouts.js`):
+charts through the mod's own scorer, so both sides are judged on one rule and the
+comparison is in expected mutations per step rather than in how similar the
+pictures look (`node moddev/layouts.js`):
 
 - **Juicy queenbeet** wants eight mature queenbeets around one empty tile. Until
   all eight are down the score is flat zero, so no single-tile change looks like
@@ -152,21 +212,29 @@ Both are fixed by starting the climb from better shapes - a solid block with
 isolated single-tile holes, and a ring - rather than by changing the search.
 
 ```
-node dev/layouts.js
+node moddev/layouts.js
 
                                     best hand-drawn    the assistant
-Bakeberry      (2x baker's wheat)            0.0167          0.0228    +37%
-Queenbeet      (chocoroot + bakeberry)       0.1800          0.2500    +39%
-Juicy queenbeet(8x queenbeet)                0.0040          0.0040    same
-Golden clover  (4x clover)                   0.0094          0.0118    +25%
+Bakeberry      (2x baker's wheat)            0.0116          0.0116   +0.7%
+Queenbeet      (chocoroot + bakeberry)       0.0852          0.1175    +38%
+Juicy queenbeet(8x queenbeet)              4.55e-9         4.55e-9    same
+Golden clover  (4x clover)                   0.0046          0.0049     +7%
 Shriekbulb     (5x elderwort)                0.0120          0.0120    same
-Everdaisy      (3x tidygrass + 3x elderwort) 0.0080          0.0160   +100%
+Everdaisy      (3x tidygrass + 3x elderwort) 0.0035          0.0069    +96%
 ```
 
 Where it wins it is usually for the same reason: the charts draw a tidy
 checkerboard, and a checkerboard wastes adjacency. Clustering the parents into
 pairs puts more empty tiles next to the two mature plants a recipe actually
-needs, which is why Bakeberry gains a third and Everdaisy doubles.
+needs.
+
+Pricing maturity moves this table twice over. Every number falls, because a
+snapshot was counting parents that are not there yet - Juicy queenbeet wants
+eight grown queenbeets at once and each is grown 18% of the time, so a layout
+that looks like 0.004 a step is really one seed every two hundred million steps.
+And it changes which hand-drawn shape is the best of them: for Golden clover
+the chart's alternating rows lose to alternating columns, and for Everdaisy the
+paired rows lose to a solid block with holes.
 
 ## Modes
 
@@ -189,7 +257,7 @@ second pass is what finds Nursetulip, which does nothing by itself except cost
 2% CpS but lifts all eight neighbours by 20%.
 
 Every probe runs on a scratch plot. The real plot and both effect caches are
-restored on the way out, and `dev/test.js` asserts they come back
+restored on the way out, and `moddev/test.js` asserts they come back
 byte-identical.
 
 ## It asks before it takes anything
@@ -255,7 +323,8 @@ through the mod's `load()` hook.
 - **Layout** is a small map of the plot: one colour per species, dashed squares
   are deliberately left empty for mutations to land in, blank squares are tiles
   your farm level has not unlocked. Hover any square for the plant.
-- The status lines give the expected yield per step, when the next garden step
+- The status lines give the expected yield - per step, or as "one about every N
+  steps" once a recipe is slower than that - when the next garden step
   lands, what the assistant did last step, and a running count.
 
 ## How it is built
@@ -277,8 +346,9 @@ through the mod's `load()` hook.
   and injects mod scripts with `createElement('script')`, so a stray multibyte
   character can be misdecoded at load time.
 - `Game.mods['grandpas greenhouse']` exposes a small read-only API -
-  `getRecipes`, `getRecipe`, `getPlan`, `getStats`, `setMode`, `setTarget`,
-  `setObjective`, `replan` - which is what the test harness drives.
+  `getRecipes`, `getRecipe`, `getPlan`, `getStats`, `getMatureOdds`,
+  `getLandChance`, `getSnapshotChance`, `setMode`, `setTarget`, `setObjective`,
+  `replan` - which is what the test harness drives.
 
 ## Reproducing any of it
 
@@ -286,10 +356,21 @@ The tooling lives in the sibling folder `mods/local/GrandpasGreenhouseDev`, not 
 the mod, because the game zips the whole mod folder when publishing.
 
 ```
-node dev/test.js            # 114 behavioural tests against the real garden
-node dev/bench.js 3000 5    # the discovery benchmark above
-node dev/layouts.js         # layouts against the community charts
+node moddev/test.js          # 127 behavioural tests against the real garden
+node moddev/bench.js 3000 20 # the discovery benchmark above
+node moddev/layouts.js       # layouts against the community charts
+node moddev/odds.js          # how much of its life each plant spends mature
 ```
+
+The sandbox runs on a **virtual clock**. A garden step is minutes apart in a real
+game and microseconds apart here, and the mod tells one step from the next by
+watching `M.nextStep`, which is `Date.now()` plus the step length - so on the
+real clock two steps inside the same millisecond looked like one, the mod sat out
+its turn, and how often that happened depended on how fast the machine was and on
+how long its own planner took. The harness now winds the clock by hand, one
+step's worth per step, and the same seed grows the same garden twice. Every
+number here was measured after that fix; anything measured before it was noise
+worth up to three species.
 
 ## Notes
 

@@ -88,11 +88,16 @@ function makeDOM() {
 			getBoundingClientRect: function () { return {left: 0, top: 0, width: 0, height: 0}; }
 		};
 	}
-	// Looked-up elements are inert placeholders and report isConnected false,
-	// so a mod asking "is my panel still in the document?" gets a truthful no
-	// and actually builds it. Elements the mod creates itself report true, the
-	// way a real appended node would.
+	// An element the mod created and gave an id is findable again, the way a
+	// real appended node would be - otherwise the mod rebuilds its panel every
+	// frame, which no browser does, and anything keyed to "was the panel just
+	// built" behaves nothing like the real game. Everything else is an inert
+	// placeholder reporting isConnected false, so a mod asking "is my panel
+	// still in the document?" gets a truthful no and actually builds it once.
 	function get(id) {
+		for (var i = created.length - 1; i >= 0; i--) {
+			if (created[i].id === id) return created[i];
+		}
 		if (!byId[id]) { var e = el(id); e.isConnected = false; e.parentNode = root; byId[id] = e; }
 		return byId[id];
 	}
@@ -170,13 +175,30 @@ function boot(opts) {
 	});
 	Game.ObjectsById[2] = Game.Objects['Farm'];
 
+	/*
+	 * A garden step is minutes apart in a real game and microseconds apart
+	 * here, and the mod tells one step from the next by watching M.nextStep -
+	 * which is Date.now() plus the step length. Left on the real clock, two
+	 * steps inside the same millisecond look like one, the mod sits out its
+	 * turn, and how often that happens depends on how fast the machine is and
+	 * on how long the mod's own planner took. That makes every benchmark
+	 * unrepeatable. So the sandbox gets a clock the harness winds by hand:
+	 * one step, one step's worth of time.
+	 */
+	var clock = {t: 1700000000000};
+	var VDate = function (a) { return arguments.length ? new Date(a) : new Date(clock.t); };
+	VDate.now = function () { return clock.t; };
+	VDate.parse = Date.parse;
+	VDate.UTC = Date.UTC;
+	VDate.prototype = Date.prototype;
+
 	var ctx = {
 		Game: Game,
 		Math: Math,
 		document: dom.doc,
 		window: {},
 		console: console,
-		Date: Date,
+		Date: VDate,
 		JSON: JSON,
 		Array: Array, Object: Object, String: String, Number: Number, Boolean: Boolean,
 		setTimeout: function () {}, clearTimeout: function () {},
@@ -217,6 +239,7 @@ function boot(opts) {
 
 	/** One garden step, exactly as the game's own logic hook would run it. */
 	function step() {
+		clock.t += Math.max(1, Math.round((M.stepT || 60) * 1000));
 		M.nextStep = 0;                       // force the step
 		M.logic();
 		var hooks = Game.hooks['logic'] || [];

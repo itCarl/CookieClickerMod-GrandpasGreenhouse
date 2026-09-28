@@ -3,9 +3,9 @@
  "ID": "grandpas greenhouse",
  "Author": "it.Carl",
  "Description": "A simple assistant for the Farm's garden. Pick a seed you are missing and it works out which parents breed it, arranges the plot to maximise the odds, keeps that layout planted and harvests a new species the moment it matures so the seed is banked. It can also fill the plot with the layout that best boosts a bonus you choose. Everything it knows is measured from the game's own mutation code at startup, so it stays correct across patches.",
- "ModVersion": 1.0,
+ "ModVersion": 1.2,
  "GameVersion": 2.053,
- "Date": "28/08/2026",
+ "Date": "25/09/2026",
  "Dependencies": [],
  "AllowSteamAchievs": 1
 }

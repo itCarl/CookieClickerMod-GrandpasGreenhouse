@@ -142,23 +142,22 @@ console.log('\nbreed layouts');
 			naive[y][x] = (alt++ % 2) ? 'bakeberry' : 'chocoroot';
 		}
 	}
-	// Score the naive grid the same way the mod does, via the game's getMuts.
+	// Score the naive grid on the same terms the mod uses - the expected rate
+	// per step over a cycle, tile by tile - so the two layouts are comparable.
 	function scoreGrid(grid, target) {
 		var total = 0;
 		for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) {
 			if (!sb.M.isTileUnlocked(x, y) || grid[y][x]) continue;
-			var neighs = {}, neighsM = {}, any = 0;
-			for (var k in sb.M.plants) { neighs[k] = 0; neighsM[k] = 0; }
+			var neighs = {}, any = 0;
 			for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
 				if (!dx && !dy) continue;
 				var nx = x + dx, ny = y + dy;
 				if (nx < 0 || nx > 5 || ny < 0 || ny > 5 || !sb.M.isTileUnlocked(nx, ny)) continue;
 				if (!grid[ny][nx]) continue;
-				any++; neighs[grid[ny][nx]]++; neighsM[grid[ny][nx]]++;
+				any++; neighs[grid[ny][nx]] = (neighs[grid[ny][nx]] || 0) + 1;
 			}
 			if (!any) continue;
-			var muts = sb.M.getMuts(neighs, neighsM);
-			for (var i = 0; i < muts.length; i++) if (muts[i][0] === target) total += muts[i][1];
+			total += sb.mod.getLandChance(neighs, target);
 		}
 		return total;
 	}
@@ -521,11 +520,13 @@ function cloverLeft(sb) {
 
 (function () {
 	// A plant inside the expiry margin was going to die this cycle anyway, so
-	// taking it is not a loss and is not worth a question.
+	// taking it is not a loss and is not worth a question. The margin is a step
+	// of the plant's own growth: clover covers up to 2.5 age in one, so 98 is
+	// inside it and 95 - two more steps of breeding - is not.
 	var sb = fresh({seed: 32, level: 9, cookies: 1e30, cookiesPs: 1});
 	sb.unlock(QUEENBEET_PARENTS.concat(['clover']));
 	sb.clear();
-	sb.plant('clover', 1, 1, 95);
+	sb.plant('clover', 1, 1, 98);
 	sb.mod.setMode('breed');
 	sb.mod.setTarget('queenbeet');
 	sb.mod.replan();
@@ -763,6 +764,224 @@ console.log('\npersistence');
 	try { sb3.mod.load('not json at all'); } catch (e) { threw = true; }
 	ok('a corrupt save does not throw', !threw);
 	eq('and the defaults are kept', sb3.mod.getSettings().mode, 'tend');
+})();
+
+/* ------------------------------------------------------------------ *
+ * 9. Maturity is time, not a snapshot
+ *
+ * A rule reads neighsM, which counts only neighbours that have reached
+ * their own mature age. Species differ enormously in how much of a
+ * replant cycle they spend there, so a layout scored as if everything
+ * were grown at once prices a state the garden rarely occupies - and
+ * prices it worst for exactly the pairings where the two parents grow
+ * at different speeds.
+ * ------------------------------------------------------------------ */
+console.log('\nmaturity odds');
+(function () {
+	var sb = fresh();
+	sb.unlock(allSeeds(sb));
+	sb.step();
+	var odds = function (k) { return sb.mod.getMatureOdds(k); };
+
+	ok('odds are a probability', odds('bakerWheat') > 0 && odds('bakerWheat') <= 1,
+		'got ' + odds('bakerWheat'));
+	ok('a quick plant spends more of its life mature than a slow one',
+		odds('bakerWheat') > odds('queenbeet') && odds('queenbeet') > odds('duketater'),
+		'wheat ' + odds('bakerWheat') + ', queenbeet ' + odds('queenbeet') +
+		', duketater ' + odds('duketater'));
+
+	eq('an immortal is always in', odds('elderwort'), 1);
+
+	// Duketater matures at 95 and the old rule took it at 88 - that is, on the
+	// first step it could breed, if it ever got there at all. It has to keep a
+	// window worth having.
+	ok('even a late bloomer gets a window worth having (' + odds('duketater').toFixed(3) + ')',
+		odds('duketater') > 0.03, 'got ' + odds('duketater'));
+})();
+
+console.log('\nexpected mutation rate over a cycle');
+(function () {
+	var sb = fresh();
+	sb.unlock(allSeeds(sb));
+	sb.step();
+
+	// Elderwort is bred off one mature shimmerlily and one mature cronerice,
+	// and nothing else is on offer in that neighbourhood - so the expected
+	// rate is the snapshot rate times the odds of both windows overlapping.
+	var counts = {shimmerlily: 1, cronerice: 1};
+	var snap = sb.mod.getSnapshotChance(counts, 'elderwort');
+	var real = sb.mod.getLandChance(counts, 'elderwort');
+	var want = snap * sb.mod.getMatureOdds('shimmerlily') * sb.mod.getMatureOdds('cronerice');
+	near('two mature parents are discounted by both windows', real, want, want * 1e-9);
+	ok('which is far below the snapshot (' + (snap / real).toFixed(0) + 'x)', real < snap / 5,
+		'snapshot ' + snap + ', expected ' + real);
+
+	// Shriekbulb off three duketaters reads neighs, not neighsM: age is
+	// irrelevant, so nothing about growth speed may discount it.
+	var dt = {duketater: 3};
+	near('a rule that ignores maturity is not discounted',
+		sb.mod.getLandChance(dt, 'shriekbulb'),
+		sb.mod.getSnapshotChance(dt, 'shriekbulb'), 1e-12);
+})();
+
+console.log('\nlayouts follow the bottleneck');
+(function () {
+	// Elderwort needs a mature shimmerlily and a mature cronerice side by
+	// side. The two grow at wildly different speeds, so the tiles should not
+	// be split evenly: the parent with the shorter window needs more copies
+	// for the two to be mature at the same time.
+	var sb = fresh({seed: 7, level: 9, cookies: 1e30, cookiesPs: 1});
+	sb.unlock(['bakerWheat', 'thumbcorn', 'cronerice', 'gildmillet', 'clover', 'shimmerlily']);
+	sb.clear();
+	sb.mod.setMode('breed');
+	sb.mod.setTarget('elderwort');
+	var plan = sb.mod.replan();
+
+	var n = {shimmerlily: 0, cronerice: 0};
+	for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) {
+		if (plan.grid[y][x] in n) n[plan.grid[y][x]]++;
+	}
+	ok('the layout uses both parents (' + n.shimmerlily + ' shimmerlily, ' +
+		n.cronerice + ' cronerice)', n.shimmerlily > 0 && n.cronerice > 0);
+
+	var scarce = sb.mod.getMatureOdds('shimmerlily') < sb.mod.getMatureOdds('cronerice')
+		? 'shimmerlily' : 'cronerice';
+	var other = scarce === 'shimmerlily' ? 'cronerice' : 'shimmerlily';
+	ok('and gives more tiles to ' + scarce + ', whose window is shorter',
+		n[scarce] >= n[other], n.shimmerlily + ' vs ' + n.cronerice);
+})();
+
+console.log('\nexpiry leaves room to breed');
+(function () {
+	var sb = fresh({seed: 5, level: 9, cookies: 1e30, cookiesPs: 1});
+	sb.unlock(allSeeds(sb));
+	sb.clear();
+	sb.mod.setMode('tend');
+
+	// Elderwort matures at 90 and creeps along at 0.3-0.8 age a step: taken at
+	// 91 it never breeds once. Baker's wheat covers 7-9 age a step, so at 92
+	// it is genuinely one step from withering and has bred for ages.
+	sb.plant('elderwort', 2, 2, 91);
+	sb.plant('bakerWheat', 4, 4, 92);
+	sb.mod.runStepNow();
+	ok('a late bloomer is left to breed', sb.M.plot[2][2][0] !== 0);
+	eq('a quick plant is still taken before it withers', sb.M.plot[4][4][0], 0);
+})();
+
+
+/* ------------------------------------------------------------------ *
+ * 10. The harness itself
+ *
+ * Every number the README quotes comes out of this sandbox, so the sandbox
+ * has to answer the same way twice. It runs thousands of garden steps as fast
+ * as the CPU allows, which is nothing like the minutes between steps in a
+ * real game - so anything the mod reads off the wall clock has to be driven
+ * by the harness, not by how long a plan happened to take to compute.
+ * ------------------------------------------------------------------ */
+console.log('\nthe harness repeats itself');
+(function () {
+	function runOnce() {
+		var sb = boot({seed: 12, level: 9, cookies: 1e40, cookiesPs: 1});
+		var mod = sb.loadMod();
+		sb.clear();
+		for (var k in sb.M.plants) sb.M.plants[k].unlocked = 0;
+		sb.M.plants['bakerWheat'].unlocked = 1;
+		sb.M.getUnlockedN();
+		mod.setMode('breed');
+		mod.setTarget('');
+		for (var i = 0; i < 300; i++) sb.step();
+		return sb.unlockedCount() + ' ' + JSON.stringify(sb.M.plot);
+	}
+	var a = runOnce(), b = runOnce();
+	eq('the same seed grows the same garden twice', a === b, true);
+	ok('and it is not simply doing nothing (' + a.split(' ')[0] + ' seeds)',
+		parseInt(a, 10) > 1, a.split(' ')[0]);
+})();
+
+/* ------------------------------------------------------------------ *
+ * Immortals can wall off the nursery. Meddleweed only sprouts in a tile
+ * with no neighbours at all, immortals are never uprooted, so elderwort on
+ * a checkerboard makes a weed impossible - the assistant must say it is
+ * stuck rather than run a nursery that waits forever.
+ * ------------------------------------------------------------------ */
+console.log('\nnursery blocked by immortals');
+(function () {
+	var sb = fresh();
+	// elderwort + shriekbulb in hand: nothing sowable leads anywhere new
+	// (everdaisy also needs tidygrass), so the nursery is the only way out.
+	sb.clear();
+	for (var k in sb.M.plants) sb.M.plants[k].unlocked = 0;
+	sb.unlock(['elderwort', 'shriekbulb']);
+	sb.mod.setMode('breed');
+	sb.mod.setTarget('');
+
+	// Empty plot first: the nursery is possible and must still be chosen.
+	var plan = sb.mod.replan();
+	ok('empty plot: nursery plan', !!plan && !!plan.nursery, JSON.stringify(plan && plan.label));
+
+	// Checkerboard of immortal elderwort: every tile has one on it or next
+	// to it, so no tile can ever be neighbour-free.
+	for (var y = 0; y < 6; y++) {
+		for (var x = 0; x < 6; x++) {
+			if ((x + y) % 2 === 0) sb.plant('elderwort', x, y);
+		}
+	}
+	plan = sb.mod.replan();
+	ok('blocked plot: no nursery plan', !!plan && !plan.nursery, JSON.stringify(plan));
+	ok('blocked plot: plan says stuck', !!plan && !!plan.stuck, JSON.stringify(plan));
+	ok('blocked plot: status names the deadlock',
+		sb.mod.getStatus().indexOf('stuck') === 0, sb.mod.getStatus());
+
+	// One corner freed by hand is enough to make the nursery a plan again.
+	sb.M.plot[0][0] = [0, 0];
+	sb.M.plot[0][1] = [0, 0];
+	sb.M.plot[1][0] = [0, 0];
+	sb.M.plot[1][1] = [0, 0];
+	sb.M.plot[0][2] = [0, 0];
+	sb.M.plot[2][0] = [0, 0];
+	sb.M.plot[2][2] = [0, 0];
+	sb.M.plot[2][1] = [0, 0];
+	sb.M.plot[1][2] = [0, 0];
+	plan = sb.mod.replan();
+	ok('freed corner: nursery again', !!plan && !!plan.nursery, JSON.stringify(plan));
+})();
+
+/* ------------------------------------------------------------------ *
+ * setHTML must not trust el.innerHTML as its change detector: a real
+ * browser re-serializes what it parsed, so the readback never matches and
+ * the grid rebuilds thirty times a second. The cache keys on what the mod
+ * last wrote - an unchanged string writes nothing, even when the DOM
+ * reports something else.
+ * ------------------------------------------------------------------ */
+console.log('\nsetHTML writes only on change');
+(function () {
+	// Every seed banked and the plot empty: the plan is null and the grid's
+	// markup is a constant, so any rewrite between steps is the cache failing.
+	var sb = fresh();
+	sb.clear();
+	sb.unlock(allSeeds(sb));
+	sb.mod.setMode('breed');
+	sb.step();
+	sb.step();
+
+	var grid = sb.dom.get('ggGrid');
+	ok('the layout grid was drawn', grid.innerHTML.length > 0, 'empty innerHTML');
+
+	// Simulate the browser re-serializing: the DOM now reports different
+	// markup for the same content. A readback-based compare would rewrite;
+	// the cache must not.
+	grid.innerHTML = 'RESERIALIZED-BY-BROWSER';
+	sb.step();
+	eq('an unchanged panel does not rewrite the grid', grid.innerHTML, 'RESERIALIZED-BY-BROWSER');
+
+	// A real change must still land: relocking a seed brings a breed plan
+	// with a real layout back.
+	sb.M.plants['queenbeet'].unlocked = 0;
+	sb.M.getUnlockedN();
+	sb.mod.replan();
+	sb.step();
+	ok('a plan change rewrites the grid', grid.innerHTML !== 'RESERIALIZED-BY-BROWSER',
+		grid.innerHTML.slice(0, 40));
 })();
 
 /* ------------------------------------------------------------------ */

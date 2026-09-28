@@ -8,10 +8,10 @@
  * many of one parent at once - a solid block with single-tile holes so every
  * hole is surrounded by eight plants.
  *
- * Those shapes are rebuilt here and scored with the same function the mod uses,
- * which is the game's own M.getMuts. So this is not "do the pictures look
- * alike" but "does either shape actually breed more", answered in expected
- * mutations per garden step.
+ * Those shapes are rebuilt here and scored through the mod's own window, which
+ * asks the game's M.getMuts. So this is not "do the pictures look alike" but
+ * "does either shape actually breed more", answered in expected mutations per
+ * garden step, over the cycle the plants really live.
  */
 'use strict';
 
@@ -34,46 +34,28 @@ function emptyGrid() {
 }
 
 /**
- * The exact chance a target lands on one empty tile, including the fact that
- * the game plants only one winner chosen uniformly from every roll that passed.
- * Same maths as the mod - see landChance in main.js.
+ * What a layout is worth, in expected mutations of the target per garden step.
+ *
+ * Scored through the mod's own window rather than a copy of its maths, so the
+ * hand-drawn shapes and the assistant's are judged by exactly the same rule -
+ * including the two things a picture cannot show: that the game plants only
+ * one winner from every roll that passed, and that a neighbour only counts as
+ * a parent while it is mature, which for a slow grower is a small part of its
+ * life.
  */
-function landChance(muts, target) {
-	var pT = 0, others = [];
-	for (var i = 0; i < muts.length; i++) {
-		if (muts[i][0] === target) pT = 1 - (1 - pT) * (1 - muts[i][1]);
-		else others.push(muts[i][1]);
-	}
-	if (pT <= 0) return 0;
-	var dist = [1];
-	for (var i = 0; i < others.length; i++) {
-		var p = others[i], next = [];
-		for (var k = 0; k <= dist.length; k++) next[k] = 0;
-		for (var k = 0; k < dist.length; k++) {
-			next[k] += dist[k] * (1 - p);
-			next[k + 1] += dist[k] * p;
-		}
-		dist = next;
-	}
-	var share = 0;
-	for (var k = 0; k < dist.length; k++) share += dist[k] / (1 + k);
-	return pT * share;
-}
-
 function score(grid, target) {
 	var total = 0;
 	for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) {
 		if (!M.isTileUnlocked(x, y) || grid[y][x]) continue;
-		var neighs = {}, neighsM = {}, any = 0;
-		for (var k in M.plants) { neighs[k] = 0; neighsM[k] = 0; }
+		var neighs = {}, any = 0;
 		for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
 			if (!dx && !dy) continue;
 			var nx = x + dx, ny = y + dy;
 			if (nx < 0 || nx > 5 || ny < 0 || ny > 5 || !M.isTileUnlocked(nx, ny)) continue;
 			if (!grid[ny][nx]) continue;
-			any++; neighs[grid[ny][nx]]++; neighsM[grid[ny][nx]]++;
+			any++; neighs[grid[ny][nx]] = (neighs[grid[ny][nx]] || 0) + 1;
 		}
-		if (any) total += landChance(M.getMuts(neighs, neighsM), target);
+		if (any) total += mod.getLandChance(neighs, target);
 	}
 	return total;
 }
@@ -183,6 +165,9 @@ var CASES = [
 	{target: 'everdaisy',      unlock: ['tidygrass','elderwort'],            label: 'Everdaisy (3x tidygrass + 3x elderwort)'}
 ];
 
+/** Rates run from a tenth to a billionth of a mutation a step. */
+function rate(v) { return v >= 0.001 ? v.toFixed(4) : v.toExponential(2); }
+
 var wins = 0, ties = 0, losses = 0;
 
 CASES.forEach(function (C) {
@@ -216,8 +201,8 @@ CASES.forEach(function (C) {
 	}
 
 	console.log('\n' + C.label);
-	console.log('  best hand-drawn shape   ' + bestName.padEnd(26) + bestScore.toFixed(4) + ' per step');
-	console.log('  the assistant           ' + ''.padEnd(26) + mine.toFixed(4) + ' per step');
+	console.log('  best hand-drawn shape   ' + bestName.padEnd(26) + rate(bestScore) + ' per step');
+	console.log('  the assistant           ' + ''.padEnd(26) + rate(mine) + ' per step');
 	var diff = bestScore > 0 ? (mine / bestScore - 1) * 100 : 0;
 	var verdict;
 	if (mine > bestScore * 1.005) { verdict = 'assistant is better by ' + diff.toFixed(1) + '%'; wins++; }

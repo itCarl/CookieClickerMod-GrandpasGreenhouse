@@ -18,7 +18,7 @@
 'use strict';
 
 var MOD_ID   = 'grandpas greenhouse';
-var VERSION  = '1.0';
+var VERSION  = '1.2';
 var PANEL_ID = 'grandpasGreenhousePanel';
 
 /* ------------------------------------------------------------------ *
@@ -70,7 +70,7 @@ var DEFAULTS = {
 	keepPlan:      true,    // replant the layout as tiles free up
 	pullWeeds:     true,    // uproot meddleweed the plan does not want
 	askBeforeClearing: true,// ask before uprooting a plant the layout does not want
-	expiryMargin:  12,      // how close to age 100 counts as "about to expire"
+	expirySteps:   1,       // steps of the plant's own growth to leave before it withers
 	ripenWeeds:    90,      // let meddleweed reach this age before uprooting it
 	maxSpendPct:   0.15     // most of your cookies the assistant may spend in one step
 };
@@ -96,7 +96,9 @@ var recipes    = null;  // targetKey -> [{target, chance, parents:[{key,n}], cei
 var recipesFor = null;  // built once, from the game's own getMuts
 var plan       = null;  // {grid:[[key|'']], score, label, key}
 var lastStep   = -1;
+var lastPanelRefresh = 0;   // when the per-frame panel refresh last ran
 var statusText = 'waiting for the garden';
+var STUCK_MSG  = 'stuck - immortal plants block the weed nursery and nothing you can sow leads anywhere new';
 var stats      = {harvested:0, planted:0, banked:0, uprooted:0};
 var showSettings = false;
 var seedGridKey = '';   // what the seed picker was last drawn for
@@ -145,10 +147,72 @@ function cloneGrid(g) {
 /** The age at which a plant counts as mature, as an integer the plot can hold. */
 function matureAge(p) { return Math.max(1, Math.min(99, Math.ceil(p.mature))); }
 
+/* ------------------------------------------------------------------ *
+ * Growth, measured in steps
+ *
+ * Age is the wrong unit for every judgement the assistant makes. The garden
+ * rolls its mutations once per step, and a step moves a plant on by
+ * ageTick + rand*ageTickR - a number that spans three orders of magnitude
+ * across the seed list. Baker's wheat covers eight age in a step and lives
+ * twelve steps; elderwort covers half of one and lives a hundred and eighty.
+ * Anything expressed in age silently means something different for each.
+ * ------------------------------------------------------------------ */
+
+/** Average age gained per step. */
+function ageStep(p) { return Math.max(1e-6, p.ageTick + p.ageTickR / 2); }
+
+/** The most age a single step can add - what a margin has to cover. */
+function ageStepMax(p) { return Math.max(1e-6, p.ageTick + p.ageTickR); }
+
+/**
+ * The age at which the assistant takes a plant it means to keep growing.
+ *
+ * A plant withers at 100, so it goes on the last step it is certainly still
+ * alive - the margin is one of its own steps, not a fixed slice of age. Read
+ * in age the two are wildly different: twelve age is a step and a half of
+ * baker's wheat but twenty steps of elderwort, and elderwort only matures at
+ * 90. A margin like that harvests the late bloomers before they have bred
+ * even once, which is exactly the seed they were planted to make.
+ */
+function harvestAgeOf(p) {
+	var margin = ageStepMax(p) * Math.max(0, S.expirySteps);
+	return Math.max(matureAge(p), Math.min(99, Math.floor(100 - margin)));
+}
+
+/**
+ * The share of a replant cycle a plant spends mature, in steps.
+ *
+ * This is the number the layout scorer was missing. A rule reads neighsM,
+ * which counts only neighbours past their own mature age, so a neighbour is
+ * worth its odds of being there - 0.6 for baker's wheat, a tenth of that for
+ * a late bloomer on a slow tick. An immortal never cycles, so it is always in.
+ */
+function matureOdds(p) {
+	if (p.immortal) return 1;
+	var tick = ageStep(p);
+	var toHarvest = Math.max(1, Math.ceil(harvestAgeOf(p) / tick));
+	var toMature  = Math.ceil(matureAge(p) / tick);
+	// A plant is mature for at least the step it crosses the line, and the
+	// cycle carries one more step for the tile to be replanted.
+	return Math.max(1, toHarvest - toMature) / (toHarvest + 1);
+}
+
 function fmtPct(v) {
 	if (v >= 0.1) return (v * 100).toFixed(0) + '%';
 	if (v >= 0.01) return (v * 100).toFixed(1) + '%';
 	return (v * 100).toFixed(2) + '%';
+}
+
+/**
+ * A breeding rate worth reading. Once maturity is priced in, most recipes sit
+ * well below a hundredth of a mutation per step, where a decimal is all
+ * zeroes - and "one every 300 steps" is the thing worth knowing anyway, since
+ * a step is minutes.
+ */
+function fmtRate(v) {
+	if (!(v > 0)) return 'nothing yet - no route from what is planted';
+	if (v >= 0.01) return v.toFixed(3) + ' of this seed per garden step';
+	return 'one of this seed about every ' + Math.round(1 / v) + ' garden steps';
 }
 
 function fmtCookies(n) {
@@ -362,14 +426,51 @@ function bestTarget(m) {
  */
 function nurseryScore(m) {
 	var gain = 0;
-	if (!m.plants['meddleweed'].unlocked) gain += 1;
+	// The weed itself is read off the game's own flag; the fungi it drops are
+	// hardcoded in M.harvest, so their names are checked against the garden
+	// rather than trusted - a renamed plant degrades this to zero instead of
+	// throwing and silently killing Breed.
+	for (var k in m.plants) {
+		if (m.plants[k].weed && !m.plants[k].unlocked) gain += 1;
+	}
 	var spores = ['brownMold', 'crumbspore'];
 	for (var i = 0; i < spores.length; i++) {
-		if (!m.plants[spores[i]].unlocked) gain += 1 + unblockCount(m, spores[i]);
+		var sp = m.plants[spores[i]];
+		if (sp && !sp.unlocked) gain += 1 + unblockCount(m, spores[i]);
 	}
 	if (!gain) return 0;
+	// The gate is deliberately binary, not a scale-down: the nursery clears
+	// the plot itself, so what stands on it today says nothing about how many
+	// weeds it will host - except for immortals, which nothing ever clears.
+	// Scaling by today's occupancy just delays the nursery while the planner
+	// keeps planting elderwort, which is how a plot becomes unweedable.
+	if (!nurseryCapacity(m)) return 0;
 	var weedMult = m.soilsById[m.soil].weedMult;
 	return 0.002 * weedMult * 0.2 * (S.ripenWeeds / 100) * gain;
+}
+
+/**
+ * How many unlocked tiles could ever host a weed. The game sprouts meddleweed
+ * only in a tile with no neighbours at all, and the nursery can clear anything
+ * except an immortal - so a tile counts unless an immortal sits on it or on
+ * one of its eight neighbours. Scattered elderwort can push this to zero, and
+ * a nursery that cannot produce a single weed is not a plan, it is a deadlock.
+ */
+function nurseryCapacity(m) {
+	var tiles = unlockedTiles(m), n = 0;
+	for (var t = 0; t < tiles.length; t++) {
+		var x = tiles[t][0], y = tiles[t][1], blocked = false;
+		for (var dy = -1; dy <= 1 && !blocked; dy++) {
+			for (var dx = -1; dx <= 1; dx++) {
+				var xx = x + dx, yy = y + dy;
+				if (xx < 0 || xx > 5 || yy < 0 || yy > 5) continue;
+				var p = plantOf(m, m.plot[yy][xx]);
+				if (p && p.immortal) { blocked = true; break; }
+			}
+		}
+		if (!blocked) n++;
+	}
+	return n;
 }
 
 /**
@@ -387,8 +488,15 @@ function decideBreed(m) {
 	}
 
 	var bt = bestTarget(m);
-	if (nurseryScore(m) > bt.score) return {nursery: true};
-	if (!bt.key) return {nursery: true};
+	var ns = nurseryScore(m);
+	if (ns > bt.score) return {nursery: true};
+	if (!bt.key) {
+		// Nothing sowable leads anywhere new. The nursery is the way out -
+		// unless immortals have made a weed impossible, in which case saying
+		// so beats waiting forever for one.
+		if (ns > 0) return {nursery: true};
+		return {stuck: true};
+	}
 	return {target: bt.key, recipe: bestRecipeFor(m, bt.key)};
 }
 
@@ -446,12 +554,14 @@ function landChance(muts, targetKey) {
 }
 
 /**
- * A plan is scored as if every plant in it were fully grown, because that is
- * the state it spends most of its life in and the only state that breeds.
+ * What stands next to a tile in a plan - the count of each species, whatever
+ * its age. Maturity is not decided here: which of those neighbours happen to
+ * be grown at any one step is a question of odds, and expectedChance answers
+ * it. Returns null for a tile with no neighbours at all.
  */
 function neighbourhoodOf(m, grid, x, y) {
-	var neighs = {}, neighsM = {}, any = 0;
-	for (var k in m.plants) { neighs[k] = 0; neighsM[k] = 0; }
+	var neighs = {}, any = 0;
+	for (var k in m.plants) neighs[k] = 0;
 	for (var dy = -1; dy <= 1; dy++) {
 		for (var dx = -1; dx <= 1; dx++) {
 			if (dx === 0 && dy === 0) continue;
@@ -460,10 +570,95 @@ function neighbourhoodOf(m, grid, x, y) {
 			if (!m.isTileUnlocked(nx, ny)) continue;
 			var key = grid[ny][nx];
 			if (!key) continue;
-			any++; neighs[key]++; neighsM[key]++;
+			any++; neighs[key]++;
 		}
 	}
-	return any > 0 ? {neighs:neighs, neighsM:neighsM} : null;
+	return any > 0 ? neighs : null;
+}
+
+/** The old reading: what the tile offers if every neighbour is fully grown. */
+function snapshotChance(m, neighs, targetKey) {
+	return landChance(m.getMuts(neighs, neighs), targetKey);
+}
+
+/**
+ * A neighbour count map the game will accept: every species named, because
+ * several rules cap a species (neighs['clover'] < 5) and an absent key fails
+ * that test rather than passing it.
+ */
+function fillCounts(m, counts) {
+	var out = {};
+	for (var k in m.plants) out[k] = 0;
+	for (var k in counts) if (out[k] !== undefined) out[k] = counts[k];
+	return out;
+}
+
+/** C(n, k), for n no larger than the eight tiles around one square. */
+function choose(n, k) {
+	var r = 1;
+	for (var i = 0; i < k; i++) r = r * (n - i) / (i + 1);
+	return r;
+}
+
+var chanceCache = {};
+
+/**
+ * What a tile really offers per step, averaged over the cycle its neighbours
+ * are actually living.
+ *
+ * Scoring the fully-grown snapshot prices a state the garden rarely occupies,
+ * and it is wrong by a different factor for every rule. A neighbour required
+ * only by count (neighs) costs nothing at all - shriekbulb off three
+ * duketaters does not care how old they are. A neighbour required grown
+ * (neighsM) is worth its odds of being grown, and a rule naming two of them
+ * needs both windows open at the same time. That last case is where the
+ * snapshot fails hardest, because the parents rarely grow at the same speed:
+ * everdaisy wants three mature tidygrass and three mature elderwort, and
+ * tidygrass cycles twice in the time elderwort takes just to come of age.
+ *
+ * Each species' grown copies are drawn independently - which is the honest
+ * assumption for neighbours on different clocks, replanted as tiles free up
+ * rather than in lockstep - so the count grown is binomial and the states are
+ * few enough to enumerate exactly. The score of a state is the game's own
+ * verdict on it: getMuts, then the same crowding-out share as ever.
+ */
+function expectedChance(m, neighs, targetKey) {
+	var keys = [], k;
+	for (k in neighs) if (neighs[k] > 0) keys.push(k);
+	if (!keys.length) return 0;
+	keys.sort();
+
+	var ck = targetKey + '|';
+	for (var i = 0; i < keys.length; i++) ck += keys[i] + neighs[keys[i]];
+	if (chanceCache[ck] !== undefined) return chanceCache[ck];
+
+	// Per species: the chance that exactly i of its copies are grown.
+	var weights = [];
+	for (i = 0; i < keys.length; i++) {
+		var n = neighs[keys[i]], q = matureOdds(m.plants[keys[i]]), w = [];
+		for (var j = 0; j <= n; j++) w[j] = choose(n, j) * Math.pow(q, j) * Math.pow(1 - q, n - j);
+		weights.push(w);
+	}
+
+	var neighsM = {};
+	for (k in neighs) neighsM[k] = 0;
+
+	var total = 0;
+	(function walk(i, weight) {
+		if (weight < 1e-12) return;                     // a state too rare to matter
+		if (i === keys.length) {
+			total += weight * landChance(m.getMuts(neighs, neighsM), targetKey);
+			return;
+		}
+		for (var j = 0; j <= neighs[keys[i]]; j++) {
+			neighsM[keys[i]] = j;
+			walk(i + 1, weight * weights[i][j]);
+		}
+		neighsM[keys[i]] = 0;
+	})(0, 1);
+
+	chanceCache[ck] = total;
+	return total;
 }
 
 function scoreBreedPlan(m, grid, tiles, targetKey) {
@@ -471,9 +666,9 @@ function scoreBreedPlan(m, grid, tiles, targetKey) {
 	for (var t = 0; t < tiles.length; t++) {
 		var x = tiles[t][0], y = tiles[t][1];
 		if (grid[y][x]) continue;                       // mutations land on empty tiles only
-		var nb = neighbourhoodOf(m, grid, x, y);
-		if (!nb) continue;
-		total += landChance(m.getMuts(nb.neighs, nb.neighsM), targetKey);
+		var neighs = neighbourhoodOf(m, grid, x, y);
+		if (!neighs) continue;
+		total += expectedChance(m, neighs, targetKey);
 	}
 	return total;
 }
@@ -755,6 +950,9 @@ function wantedPlanKey(m) {
 	if (S.mode === 'breed') {
 		var d = decideBreed(m);
 		if (d.done) return 'breed:done';
+		// Capacity is part of the key so a hand-harvested immortal, or anything
+		// else that frees a corner, triggers a re-plan on the next step.
+		if (d.stuck) return 'breed:stuck:' + unlockedTiles(m).length + ':' + nurseryCapacity(m);
 		if (d.nursery || !d.recipe) return 'breed:nursery';
 		return 'breed:' + d.target + ':' + parentsKey(d.recipe.parents) + ':' + unlockedTiles(m).length;
 	}
@@ -794,6 +992,11 @@ function rebuildPlan(m, force) {
 			plan = null;
 			statusText = 'every seed is banked - nothing left to breed';
 			return null;
+		}
+		if (d.stuck) {
+			plan = {stuck: true, key: want, grid: null, score: 0, label: 'Stuck'};
+			statusText = STUCK_MSG;
+			return plan;
 		}
 		if (d.nursery || !d.recipe) {
 			plan = nurseryPlan(want);
@@ -865,7 +1068,7 @@ function removalsFor(m) {
 
 		var age = tile[1], mature = age >= p.mature;
 		if (!mature && !nursery) continue;
-		if (mature && age >= 100 - S.expiryMargin) continue;
+		if (mature && age >= harvestAgeOf(p)) continue;
 		out.push({x: x, y: y, key: p.key, name: p.name, mature: mature});
 	}
 	return out;
@@ -936,7 +1139,7 @@ function runStep(m) {
 		// their own.
 		if (removeSet[x + ',' + y]) { harvestAt(m, x, y); continue; }
 
-		if (S.harvestMature && mature && age >= 100 - S.expiryMargin) { harvestAt(m, x, y); continue; }
+		if (S.harvestMature && mature && age >= harvestAgeOf(p)) { harvestAt(m, x, y); continue; }
 	}
 
 	if (nursery) {
@@ -952,7 +1155,10 @@ function runStep(m) {
 	}
 
 	if (!grid || !S.keepPlan) {
-		statusText = (S.mode === 'tend') ? 'tending' : 'no layout - nothing planted';
+		// A stuck plot still gets the full pass above - new species are still
+		// banked and ripe weeds still pulled - only planting has nothing to do.
+		if (plan && plan.stuck) statusText = STUCK_MSG;
+		else statusText = (S.mode === 'tend') ? 'tending' : 'no layout - nothing planted';
 		return;
 	}
 
@@ -987,6 +1193,7 @@ return [
 	'border-top:1px solid #79c600;box-shadow:0 0 8px rgba(0,0,0,0.6) inset;text-align:left;}',
 	'#' + PANEL_ID + ' .ggRow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:4px 0;}',
 	'#' + PANEL_ID + ' .ggTitle{font-weight:bold;color:#94cd50;letter-spacing:1px;}',
+	'#' + PANEL_ID + ' .ggVer{font-weight:normal;font-size:10px;letter-spacing:0;opacity:0.55;margin-left:5px;}',
 	'#' + PANEL_ID + ' .ggBtn{cursor:pointer;border:1px solid rgba(255,255,255,0.35);border-radius:3px;',
 	'padding:1px 9px;font-weight:bold;font-size:13px;background:rgba(255,255,255,0.08);color:#fff;}',
 	'#' + PANEL_ID + ' .ggBtn:hover{background:rgba(255,255,255,0.2);}',
@@ -1062,13 +1269,13 @@ var HELP = {
 	breed:    'The seed being worked towards. Pick one yourself, or leave it on Auto and the assistant chooses - it ranks by chance times how many further seeds the pick would unblock, rather than by raw odds, because chasing the best odds alone gets stuck.',
 	boost:    'Which bonus to maximise. The layout is scored by running the game\'s own effect calculation on it, so plot interactions and penalties are exact.',
 	layout:   'What the assistant wants planted. One colour per species; dashed squares are deliberately left empty, because mutations can only land on an empty tile. Blank squares are tiles your farm level has not unlocked yet. Hover a square for the plant.',
-	yield:    'How many of the target seed this layout is expected to produce per garden step. It already accounts for rival mutations crowding the tile - the game plants only one winner per tile, chosen at random from everything that rolled successfully.',
+	yield:    'How many of the target seed this layout is expected to produce per garden step, averaged over the cycle the plants really live. It accounts for rival mutations crowding the tile - the game plants only one winner per tile, chosen at random from everything that rolled successfully - and for the fact that a plant only counts as a parent while it is mature, which for a slow grower is a small part of its life.',
 	step:     'The garden only changes on a step - every 5 minutes on dirt, 3 on fertilizer, 15 on clay. The assistant acts then and does nothing in between.',
 	clearYes: 'Uproot them now and plant the layout. Mature ones still bank their seed as they go.',
 	clearNo:  'Leave them growing. The layout fills in around them as tiles free up on their own, and you will not be asked again for this layout.',
 	clearRow: 'The assistant will not take a plant you might still want without asking. This question covers only plants that would otherwise keep living - weeds, immortals, species you have not banked yet and anything already about to expire are never part of it.',
 	setBank:  'A species you have never banked is worth more than any layout, so it is harvested the moment it matures. This is the only thing that actually unlocks a seed - harvesting early banks nothing.',
-	setMature:'Take a mature plant shortly before it dies of old age, so the tile frees up instead of rotting.',
+	setMature:'Take a mature plant on the last step it is certainly still alive, so the tile frees up instead of rotting. The margin is one of the plant\'s own growth steps, not a fixed slice of age: baker\'s wheat covers eight age in a step and a duketater half of one, and a duketater is not even mature until 95.',
 	setPlan:  'Sow the layout into empty tiles as they open, spending at most 15% of your cookies per step.',
 	setWeeds: 'Uproot meddleweed the layout has no use for - but only once it has ripened, because the fungus spore it drops when pulled scales with its age.',
 	setAsk:   'Ask before uprooting anything that would otherwise keep growing. Turn it off and the assistant clears straight through.'
@@ -1111,9 +1318,15 @@ function buildPanel(host) {
 			'id="ggMode-' + MODES[i].key + '">' + MODES[i].label + '</div>';
 	}
 
+	// A rebuilt panel starts empty, so anything remembered about the old DOM
+	// is stale - both caches must reset or setHTML skips the first write.
+	htmlCache = {};
+	seedGridKey = '';
+
 	panel.innerHTML =
 		'<div class="ggRow">' +
-			'<span class="ggTitle">GRANDPA&#39;S GREENHOUSE</span>' + modeBtns +
+			'<span class="ggTitle">GRANDPA&#39;S GREENHOUSE' +
+				'<span class="ggVer">v' + VERSION + '</span></span>' + modeBtns +
 			'<div class="ggBtn" data-act="settings"' + tip('settings') + '>Settings</div>' +
 			'<div class="ggBtn" data-act="replan"' + tip('replan') + '>Re-plan</div>' +
 			'<span class="ggStat" id="ggProgress"' + tip('progress') + '></span>' +
@@ -1212,9 +1425,18 @@ function setTitle(id, text) {
 	if (el && el.getAttribute('title') !== text) el.setAttribute('title', text);
 }
 
+var htmlCache = {};
+
 function setHTML(id, html) {
+	// Comparing against el.innerHTML looks right and is not: the browser
+	// re-serializes what it parsed (#4fa3d1 comes back as rgb(79,163,209)),
+	// so the strings never match and the element rebuilds every frame. The
+	// last string actually written is the only honest thing to compare with.
+	if (htmlCache[id] === html) return;
 	var el = document.getElementById(id);
-	if (el && el.innerHTML !== html) el.innerHTML = html;
+	if (!el) return;
+	el.innerHTML = html;
+	htmlCache[id] = html;
 }
 
 /**
@@ -1330,6 +1552,11 @@ function refreshPanel() {
 				? (plan.pct >= 0 ? '+' : '') + (plan.pct * 100).toFixed(1) + '%' : '');
 			setText('ggRecipe', 'Fills every unlocked tile with the mix that maximises this bonus, ' +
 				'scored against the game\'s own effect calculation.');
+		} else if (plan && plan.stuck) {
+			setText('ggChoiceInfo', 'stuck');
+			setText('ggRecipe', 'Immortal plants sit on or next to every tile, so meddleweed can ' +
+				'never sprout, and nothing you can sow breeds a missing seed. Harvesting an ' +
+				'immortal by hand frees a corner for the nursery.');
 		} else if (plan && plan.nursery) {
 			setText('ggChoiceInfo', 'nursery');
 			setText('ggRecipe', 'Nothing you can sow breeds anything you are missing. The plot is ' +
@@ -1407,7 +1634,7 @@ function refreshPanel() {
 	var lines = [];
 	if (plan && S.mode === 'breed' && typeof plan.score === 'number') {
 		lines.push('<span title="' + HELP.yield.replace(/"/g, '&quot;') + '">Expected ' +
-			plan.score.toFixed(3) + ' of this seed per garden step</span>');
+			fmtRate(plan.score) + '</span>');
 	}
 	var secs = Math.max(0, Math.round((m.nextStep - Date.now()) / 1000));
 	lines.push('Next step in ' + Math.floor(secs / 60) + 'm ' + (secs % 60) + 's  (' +
@@ -1477,7 +1704,17 @@ function onLogic() {
 	// the one reliable signal that a step just happened. It also moves when the
 	// soil changes, which is exactly when a re-plan is wanted anyway.
 	var stepped = (m.nextStep !== lastStep);
-	if (!stepped) { safeUI('panel refresh', refreshPanel); return; }
+	if (!stepped) {
+		// Nothing the panel shows changes faster than its countdown's whole
+		// seconds, so thirty redraw attempts a second are wasted 36-tile
+		// scans; four are indistinguishable from the player's side.
+		var now = Date.now();
+		if (now - lastPanelRefresh >= 250) {
+			lastPanelRefresh = now;
+			safeUI('panel refresh', refreshPanel);
+		}
+		return;
+	}
 	var first = (lastStep === -1);
 	lastStep = m.nextStep;
 
@@ -1489,6 +1726,7 @@ function onLogic() {
 		console.error('[Grandpa\'s Greenhouse] step failed:', err);
 	}
 
+	lastPanelRefresh = Date.now();
 	safeUI('panel refresh', refreshPanel);
 }
 
@@ -1521,6 +1759,13 @@ Game.registerMod(MOD_ID, {
 	 */
 	version: VERSION,
 	getRecipes:  function () { var m = garden(); return m ? ensureRecipes(m) : null; },
+	getMatureOdds: function (key) { var m = garden(); return m ? matureOdds(m.plants[key]) : 0; },
+	getLandChance: function (counts, key) {
+		var m = garden(); return m ? expectedChance(m, fillCounts(m, counts), key) : 0;
+	},
+	getSnapshotChance: function (counts, key) {
+		var m = garden(); return m ? snapshotChance(m, fillCounts(m, counts), key) : 0;
+	},
 	getRecipe:   function (key) { var m = garden(); return m ? bestRecipeFor(m, key) : null; },
 	getPlan:     function () { return plan; },
 	getSettings: function () { return S; },
