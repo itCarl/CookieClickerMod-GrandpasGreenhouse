@@ -1,29 +1,55 @@
-# Grandpa's Greenhouse
+<a id="readme-top"></a>
 
-A garden assistant for Cookie Clicker's Farm minigame that breeds the seeds you are missing.
+<div align="center">
+  <img src="docs/logo.png" alt="Logo" width="128" height="128">
 
-![Release](https://img.shields.io/github/v/release/itCarl/cookie-clicker-grandpas-greenhouse)
-![CI](https://github.com/itCarl/cookie-clicker-grandpas-greenhouse/actions/workflows/release.yml/badge.svg)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+  <h3 align="center">Grandpa's Greenhouse</h3>
+
+  <p align="center">
+    A garden assistant for Cookie Clicker's Farm minigame that breeds the seeds you are missing.
+    <br />
+    <a href="https://github.com/itCarl/cookie-clicker-grandpas-greenhouse/releases"><strong>Download the latest release</strong></a>
+    <br />
+    <br />
+    <a href="https://github.com/itCarl/cookie-clicker-grandpas-greenhouse/issues/new?labels=bug">Report Bug</a>
+    &middot;
+    <a href="https://github.com/itCarl/cookie-clicker-grandpas-greenhouse/issues/new?labels=enhancement">Request Feature</a>
+  </p>
+
+  <img src="https://img.shields.io/github/v/release/itCarl/cookie-clicker-grandpas-greenhouse" alt="Release">
+  <img src="https://github.com/itCarl/cookie-clicker-grandpas-greenhouse/actions/workflows/release.yml/badge.svg" alt="CI">
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
+</div>
 
 <details>
-<summary>Table of Contents</summary>
-
-- [About](#about)
-- [Features](#features)
-- [Installation](#installation)
-- [How it works](#how-it-works)
-- [Development](#development)
-- [License](#license)
-
+  <summary>Table of Contents</summary>
+  <ol>
+    <li><a href="#about-the-project">About The Project</a></li>
+    <li><a href="#features">Features</a></li>
+    <li>
+      <a href="#installation">Installation</a>
+      <ul>
+        <li><a href="#steam-workshop">Steam Workshop</a></li>
+        <li><a href="#manual">Manual</a></li>
+      </ul>
+    </li>
+    <li><a href="#how-it-works">How It Works</a></li>
+    <li><a href="#development">Development</a></li>
+    <li><a href="#license">License</a></li>
+    <li><a href="#acknowledgments">Acknowledgments</a></li>
+  </ol>
 </details>
 
-## About
+## About The Project
 
 Grandpa's Greenhouse is a garden assistant. Pick a seed you are missing and it
 works out which parents breed it, arranges the plot to maximise the odds, keeps
 that layout planted, and harvests a new species the moment it matures so the
 seed is banked.
+
+![The assistant's panel below the garden](docs/screenshots/gg-00-hero.png)
+
+![Breed mode chasing a seed](docs/screenshots/gg-01-breed.png)
 
 - **No hardcoded recipes.** At startup it recovers the full breeding table,
   ceilings included, from the game's own mutation function `M.getMuts`. If the
@@ -38,6 +64,8 @@ seed is banked.
 
 Starting from a fresh save, it unlocks about 28.6 of 34 species unattended in
 3000 garden steps, against 6.8 for tending alone.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Features
 
@@ -65,6 +93,8 @@ Starting from a fresh save, it unlocks about 28.6 of 34 species unattended in
   never uprooted for a layout.
 - No monkey-patching: runs off the documented `logic` hook and `M.nextStep`.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Installation
 
 ### Steam Workshop
@@ -80,7 +110,9 @@ Search the Cookie Clicker Workshop for **Grandpa's Greenhouse** and subscribe.
 3. Restart the game and enable the mod under **Options -> Mods**. The panel
    appears under the garden.
 
-## How it works
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## How It Works
 
 - **Reading the tree.** `M.getMuts(neighs, neighsM)` maps a neighbourhood to a
   list of `[species, chance]`. The mod feeds it every species alone at counts
@@ -107,6 +139,8 @@ Search the Cookie Clicker Workshop for **Grandpa's Greenhouse** and subscribe.
 `getPlan`, `getStats`, `setMode`, `setTarget`, `replan`, ...) that the test
 harness drives. See [`mod/README.md`](mod/README.md) for the full write-up and
 benchmark tables.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Development
 
@@ -136,6 +170,16 @@ local Steam install of Cookie Clicker.
 | `moddev/layouts.js` | layouts scored against the community charts |
 | `moddev/odds.js` | how much of its life each plant spends mature |
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## License
 
 Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Acknowledgments
+
+- [Orteil's Cookie Clicker](https://orteil.dashnet.org/cookieclicker/) - the game this mod reads everything from
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>

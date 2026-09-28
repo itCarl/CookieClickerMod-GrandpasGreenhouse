@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#141008"/>
+  <!-- crest ring -->
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#3a2c18" stroke-width="6"/>
+  <circle cx="256" cy="256" r="180" fill="#1a1409" stroke="#7c4a27" stroke-width="5"/>
+  <!-- leaf ornaments on the ring -->
+  <g fill="#4a7c39">
+    <path d="M256 58 C 268 70, 268 84, 256 92 C 244 84, 244 70, 256 58 Z"/>
+    <path d="M256 454 C 268 442, 268 428, 256 420 C 244 428, 244 442, 256 454 Z"/>
+    <path d="M58 256 C 70 244, 84 244, 92 256 C 84 268, 70 268, 58 256 Z"/>
+    <path d="M454 256 C 442 244, 428 244, 420 256 C 428 268, 442 268, 454 256 Z"/>
+  </g>
+  <!-- greenhouse, geometry from Max's draft (gg_garden_assistant_logo.md), scaled 6x -->
+  <g transform="translate(256,262) scale(6)">
+    <path d="M-18,12 L-18,-4 L0,-16 L18,-4 L18,12 Z"
+      fill="none" stroke="#d8c9a0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M0,-16 L0,-4 M-18,-4 L18,-4 M-9,-10 L-9,-4 M9,-10 L9,-4"
+      fill="none" stroke="#d8c9a0" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- small sprout growing from the floor -->
+    <path d="M0,12 L0,4" fill="none" stroke="#94cd50" stroke-width="1.4" stroke-linecap="round"/>
+    <path d="M0,6 Q-1.5,1.5 -6.5,2 Q-5.5,7 0,6 Z" fill="#94cd50"/>
+    <path d="M0,8 Q1.5,3.5 6.5,4 Q5.5,9 0,8 Z" fill="#4a7c39"/>
+  </g>
+</svg>
