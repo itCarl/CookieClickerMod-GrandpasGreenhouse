@@ -8,16 +8,16 @@
   <p align="center">
     A garden assistant for Cookie Clicker's Farm minigame that breeds the seeds you are missing.
     <br />
-    <a href="https://github.com/itCarl/GrandpasGreenhouse/releases"><strong>Download the latest release</strong></a>
+    <a href="https://github.com/itCarl/CookieClickerMod-GrandpasGreenhouse/releases"><strong>Download the latest release</strong></a>
     <br />
     <br />
-    <a href="https://github.com/itCarl/GrandpasGreenhouse/issues/new?labels=bug">Report Bug</a>
+    <a href="https://github.com/itCarl/CookieClickerMod-GrandpasGreenhouse/issues/new?labels=bug">Report Bug</a>
     &middot;
-    <a href="https://github.com/itCarl/GrandpasGreenhouse/issues/new?labels=enhancement">Request Feature</a>
+    <a href="https://github.com/itCarl/CookieClickerMod-GrandpasGreenhouse/issues/new?labels=enhancement">Request Feature</a>
   </p>
 
-  <img src="https://img.shields.io/github/v/release/itCarl/GrandpasGreenhouse" alt="Release">
-  <img src="https://github.com/itCarl/GrandpasGreenhouse/actions/workflows/release.yml/badge.svg" alt="CI">
+  <img src="https://img.shields.io/github/v/release/itCarl/CookieClickerMod-GrandpasGreenhouse" alt="Release">
+  <img src="https://github.com/itCarl/CookieClickerMod-GrandpasGreenhouse/actions/workflows/release.yml/badge.svg" alt="CI">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
 </div>
 
@@ -104,7 +104,7 @@ Search the Cookie Clicker Workshop for **Grandpa's Greenhouse** and subscribe.
 ### Manual
 
 1. Download `GrandpasGreenhouse.zip` from
-   [GitHub Releases](https://github.com/itCarl/GrandpasGreenhouse/releases).
+   [GitHub Releases](https://github.com/itCarl/CookieClickerMod-GrandpasGreenhouse/releases).
 2. Unzip it into
    `<Cookie Clicker>/resources/app/mods/local/GrandpasGreenhouse/`.
 3. Restart the game and enable the mod under **Options -> Mods**. The panel
