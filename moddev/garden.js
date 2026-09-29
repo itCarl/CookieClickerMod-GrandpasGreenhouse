@@ -80,7 +80,10 @@ function makeDOM() {
 			appendChild: function (c) { this.children.push(c); c.parentNode = this; return c; },
 			insertBefore: function (c) { this.children.push(c); c.parentNode = this; return c; },
 			removeChild: function (c) { return c; },
-			addEventListener: function () {},
+			// Kept rather than dropped, so a test can fire the panel's own
+			// handlers (the hover tooltip) with a hand-made event.
+			listeners: {},
+			addEventListener: function (type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
 			setAttribute: function (k, v) { this[k] = v; },
 			getAttribute: function (k) { return typeof this[k] === 'string' ? this[k] : null; },
 			closest: function () { return null; },

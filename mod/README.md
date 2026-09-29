@@ -146,15 +146,15 @@ node moddev/bench.js 3000 20
 
                 seeds unlocked of 34
   Tend mode                     6.8
-  Breed mode                   28.6    (per seed: 30, 28, 28, 27, 31, 32, 29,
-                                        29, 28, 32, 14, 28, 32, 29, 29, 31,
+  Breed mode                   28.8    (per seed: 30, 28, 28, 27, 31, 32, 29,
+                                        29, 28, 32, 16, 28, 32, 29, 29, 31,
                                         28, 28, 30, 30)
 
   Breed, steps to reach N species (every seed)
-   5 by step 189     10 by step 689
+   5 by step 189     10 by step 689     15 by step 917
 ```
 
-The 14 is real and is not the layout planner: on that seed eleven immortal
+The 16 is real and is not the layout planner: on that seed eleven immortal
 elderwort end up scattered across the plot, the nursery needs bare tiles with no
 neighbours at all, and neither condition can give - so it waits for a weed that
 can never sprout. One seed in twenty, and a known hole.
@@ -238,9 +238,26 @@ paired rows lose to a solid block with holes.
 
 ## Modes
 
+The panel's tab bar is one strip of wooden tabs, drawn from the game's own
+menu art:
+
+```
+Off | Tend | Breed | Boost      Layouts | Settings
+```
+
+The four mode tabs set what the assistant does, and a mode tab is also the way
+back to the assistant's view - there is no separate Assistant tab. **Layouts**
+and **Settings**, set a little apart, change what the panel shows and leave the
+mode alone; while one of them is open, the current mode keeps a marker so it is
+still plain what the assistant is doing.
+
+There is no mode for planting a drawing of your own. To plant by hand, pick
+Off and the assistant stays out of the way. A save still set to the old Custom
+mode loads as Off.
+
 | Mode | What it does |
 |---|---|
-| **Off** | Nothing is touched. The panel still shows recipes and progress. |
+| **Off** | Nothing is touched - pick this to plant by hand. The panel still shows recipes and progress. |
 | **Tend** | Harvests anything new, clears plants about to expire, uproots ripe meddleweed. Your layout is left alone. |
 | **Breed** | Works towards one seed - yours from the seed picker, or its own pick. Lays out the plot and keeps it planted. |
 | **Boost** | Fills the plot with the layout that maximises a bonus you choose. |
@@ -259,6 +276,64 @@ second pass is what finds Nursetulip, which does nothing by itself except cost
 Every probe runs on a scratch plot. The real plot and both effect caches are
 restored on the way out, and `moddev/test.js` asserts they come back
 byte-identical.
+
+## Layouts
+
+The **Layouts** tab is for keeping and reshaping layouts - a shape from a
+guide, a variation of the assistant's own. It is two framed halves, **Library**
+and **Editor**, and it is the one place a layout is changed: the preview in the
+assistant's view is a picture, not an editor. Opening, drawing or exporting a
+layout plants nothing. A layout made for a breeding recipe reaches the plot
+through **Use for breeding**; one drawn from scratch is a sketch to keep, copy
+and export.
+
+### Library
+
+- **Every breedable seed has a default.** After your own layouts the list
+  shows a "Breeding <seed>" entry for every seed the recipe table can breed,
+  banked or not: the assistant's own layout for it on your plot as it is now -
+  the same recipe and the same search it uses when it breeds the seed itself.
+  Defaults are worked out when you open one and never saved, so they keep up
+  as your plot grows. Paint a tile on one, or press Use for breeding, Rename or
+  Duplicate, and it becomes a layout of your own, which takes the default's
+  place in the list; delete that and the default comes back.
+- **Your own layouts are never redrawn by the mod** - not by an update, not
+  when the plot grows, not by the defaults. **Set to default** on a layout made
+  for a recipe replaces its drawing with the assistant's current layout for
+  that recipe, after asking; its name and whether it is in use stay as they
+  are.
+- **New**, **Rename**, **Duplicate**, **Delete**, as many named layouts as you
+  like. Every click is kept at once - there is nothing to save - and the
+  library is stored in the game save with the rest of the mod's settings.
+  Questions and name boxes open inside the panel, not as a browser dialog,
+  which would freeze the game loop while it waits.
+- **Export** gives all your own layouts (not the defaults) as one block of JSON
+  text to copy; **Import** takes that text back, a whole list or a single
+  layout. The text is checked in full before anything is added - a wrong grid
+  shape or an unknown seed rejects the import with a message and changes
+  nothing - and a name that is already taken gets a number.
+- **Use for breeding** has the assistant plant a layout in place of its own
+  whenever it breeds that seed from the same parents on a plot of the same
+  size. Layouts made for a recipe carry a badge with the seed's name, green
+  while in use. Only one layout is in use per recipe, so using one stops
+  whichever was before; a default you paint or rename starts out of use.
+  **Stop using** or **Delete** hands the recipe back to the assistant, and a
+  stopped layout keeps its badge.
+
+### Editor
+
+- A 6x6 grid and a **Brush** beside it: pick a seed, click tiles to paint them,
+  or pick Empty to paint a tile back to bare soil. The brush offers every seed
+  the game lets you sow, in the game's own order and with its own seed
+  packets; seeds you have not unlocked yet are greyed but can still be drawn,
+  and are planted once you bank them.
+- **Customize** a breed layout you do not like. While Breed has a recipe
+  layout, the Editor shows it under the grid with a Customize button: that
+  copies the assistant's layout into your library, linked to that recipe and
+  in use, and opens it in the editor. From then on the assistant plants your
+  version, and the yield line in the assistant's view compares it with its
+  own. If the plot grows or a different recipe is chosen, the assistant's
+  layout returns and yours stays in the library.
 
 ## It asks before it takes anything
 
@@ -292,7 +367,10 @@ uprooting, so the question and the action cannot drift apart.
 
 ## Settings
 
-Five checkboxes, under **Settings**.
+The **Settings** tab is a page of its own: five slide switches filed under
+four groups - Harvesting, Planting, Weeds and Safety - each with its help text
+written out underneath, and a line naming the mode they are acting on right
+now.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -302,13 +380,27 @@ Five checkboxes, under **Settings**.
 | Uproot ripe meddleweed the layout does not want | on | Weeds the plan needs are kept, and none are pulled before they ripen. |
 | Ask before uprooting plants that stand in the way of the layout | on | The confirmation above. Turn it off and the assistant clears straight through, the way it used to. |
 
+There is no Re-plan button: the plan is worked out again by itself when the
+plot grows or you change soil.
+
+**Reset mod data**, at the foot of the page, is the way out when something in
+the saved data has gone wrong. It asks first, inside the page, and then puts
+every setting back to its default and deletes your drawn layouts and the
+counters. The garden itself is not touched.
+
 The rest - the expiry margin, the ripening age, the per-step spending cap - live
 in `DEFAULTS` in `main.js`. They are still real settings and can be injected
 through the mod's `load()` hook.
 
 ## Reading the panel
 
-- **Seeds x/34** and how much of the plot is in use.
+The assistant's view is a single pane, headed with what the mode is doing
+right now: **Breeding** and the seed, **Boosting**, **Tending** or **Off**. The
+question side - the seed or bonus, the recipe, the uproot question - sits on
+the left, the plot side - the layout, its colour key and the status - on the
+right.
+
+- **Seeds x/34** and how much of the plot is in use, beside the tabs.
 - In Breed, a **seed picker**: one tile per species you are still missing,
   drawn with the game's own seed-packet icons from `gardenPlants.png`. Click one
   to work towards it; hover for its best route and odds. The tiles are ordered
@@ -320,12 +412,15 @@ through the mod's `load()` hook.
   *needs 1x mature Chocoroot + 1x mature Bakeberry next to an empty tile*.
 - Boost's six objectives are phrases with no icon to show, so that one stays a
   dropdown.
-- **Layout** is a small map of the plot: one colour per species, dashed squares
-  are deliberately left empty for mutations to land in, blank squares are tiles
-  your farm level has not unlocked. Hover any square for the plant.
+- **The layout** is a small read-only map of the plot: one colour per species,
+  dashed squares are deliberately left empty for mutations to land in, blank
+  squares are tiles your farm level has not unlocked. Hover any square for the
+  plant. To plant a different breeding layout, customize it in the Layouts
+  tab.
 - The status lines give the expected yield - per step, or as "one about every N
   steps" once a recipe is slower than that - when the next garden step
   lands, what the assistant did last step, and a running count.
+- Every control explains itself on hover, in the game's own tooltip box.
 
 ## How it is built
 
@@ -345,18 +440,27 @@ through the mod's `load()` hook.
 - **ASCII-only source.** The game's `index.html` declares no `<meta charset>`
   and injects mod scripts with `createElement('script')`, so a stray multibyte
   character can be misdecoded at load time.
-- `Game.mods['grandpas greenhouse']` exposes a small read-only API -
-  `getRecipes`, `getRecipe`, `getPlan`, `getStats`, `getMatureOdds`,
-  `getLandChance`, `getSnapshotChance`, `setMode`, `setTarget`, `setObjective`,
-  `replan` - which is what the test harness drives.
+- **Looks like the game, ships no art.** Hover text goes through the game's own
+  `Game.tooltip`, not the browser's `title=` box. The panel background is the
+  garden's soil texture (`BGgarden.jpg`) and the tabs are cut from the game's
+  menu art (`panelMenu3.png`, `frameBorder.png`), all loaded from the game's
+  own `img/` folder, so the mod folder carries no images of its own beyond the
+  Workshop thumbnail.
+- `Game.mods['grandpas greenhouse']` exposes a small API - `getRecipes`,
+  `getRecipe`, `getPlan`, `getStats`, `getMatureOdds`, `getLandChance`,
+  `getSnapshotChance`, `setMode`, `setTarget`, `setObjective`, `replan`, and the
+  layout library's own calls (`getLibrary`, `createLayout`, `paintTile`,
+  `useForBreeding`, `exportLayouts`, ...) - which is what the test harness
+  drives. The setters move the same switches the panel's clicks do, through
+  the same functions; nothing in it touches the garden directly.
 
 ## Reproducing any of it
 
-The tooling lives in the sibling folder `mods/local/GrandpasGreenhouseDev`, not in
-the mod, because the game zips the whole mod folder when publishing.
+The tooling lives in `moddev/`, beside this folder in the repository rather than
+in it, because the game zips the whole mod folder when publishing.
 
 ```
-node moddev/test.js          # 127 behavioural tests against the real garden
+node moddev/test.js          # 511 behavioural tests against the real garden
 node moddev/bench.js 3000 20 # the discovery benchmark above
 node moddev/layouts.js       # layouts against the community charts
 node moddev/odds.js          # how much of its life each plant spends mature

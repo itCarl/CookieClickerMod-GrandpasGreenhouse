@@ -51,6 +51,10 @@ seed is banked.
 
 ![Breed mode chasing a seed](docs/screenshots/gg-01-breed.png)
 
+![The Layouts tab: the library of breeding layouts beside the editor](docs/screenshots/gg-05-layouts.png)
+
+![The Settings page](docs/screenshots/gg-04-settings.png)
+
 - **No hardcoded recipes.** At startup it recovers the full breeding table,
   ceilings included, from the game's own mutation function `M.getMuts`. If the
   game retunes a recipe, the mod follows without an edit.
@@ -61,16 +65,23 @@ seed is banked.
   mutations competing for the same tile are priced in exactly.
 - **Asks before uprooting.** It never removes a plant that would keep living
   without asking first.
+- **A layout library of your own.** Every breedable seed comes with the
+  assistant's layout as a default; customize one, draw your own, and export or
+  import them as JSON. Your layouts are kept in the game save and never
+  redrawn by the mod.
 
-Starting from a fresh save, it unlocks about 28.6 of 34 species unattended in
+Starting from a fresh save, it unlocks about 28.8 of 34 species unattended in
 3000 garden steps, against 6.8 for tending alone.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Features
 
+- One strip of wooden tabs under the garden: `Off | Tend | Breed | Boost`, then
+  `Layouts | Settings`. A mode tab also brings back the assistant's view.
 - Four modes:
-  - **Off** - nothing is touched; the panel still shows recipes and progress.
+  - **Off** - nothing is touched; pick it to plant by hand. The panel still
+    shows recipes and progress.
   - **Tend** - harvests anything new, clears plants about to expire, uproots
     ripe meddleweed. Your layout is left alone.
   - **Breed** - works towards one seed (yours or its own pick), lays out the
@@ -87,8 +98,23 @@ Starting from a fresh save, it unlocks about 28.6 of 34 species unattended in
   four others beats a 5% dead end.
 - Deliberately farms meddleweed when that is the best option, since half the
   tree sits behind it.
-- Layout map, expected yield per step, next-step timer and a running action log
-  in the panel.
+- A single plan pane headed with what the mode is doing (`Breeding <seed>`,
+  `Boosting`, `Tending`, `Off`): a read-only layout map, expected yield per
+  step, next-step timer and a running action log. Changing soil or growing the
+  plot re-plans by itself - there is no Re-plan button.
+- **Layouts** tab - a Library and an Editor:
+  - every breedable seed has a default `Breeding <seed>` layout, worked out on
+    your current plot; your own layouts are stored in the game save and never
+    overwritten, with **Set to default** to pull the assistant's version back in;
+  - an editor with every sowable seed as a brush;
+  - **Customize** the layout Breed is using, then **Use for breeding** /
+    **Stop using** to hand a recipe to your version or back;
+  - JSON export and import, validated in full before anything is added.
+- **Settings** page - five slide switches in four groups (Harvesting, Planting,
+  Weeds, Safety), each with its help text written out, and a **Reset mod data**
+  button that asks first and never touches the garden.
+- Looks like part of the game: hover text uses the game's own tooltip, and the
+  panel is drawn with the game's own soil texture and menu art.
 - Spending cap of 15% of your cookies per garden step. Immortal plants are
   never uprooted for a layout.
 - No monkey-patching: runs off the documented `logic` hook and `M.nextStep`.
@@ -165,7 +191,7 @@ local Steam install of Cookie Clicker.
 
 | Script | What it answers |
 |---|---|
-| `moddev/test.js` | behavioural tests |
+| `moddev/test.js` | behavioural tests (511) |
 | `moddev/bench.js` | seeds discovered, unattended |
 | `moddev/layouts.js` | layouts scored against the community charts |
 | `moddev/odds.js` | how much of its life each plant spends mature |
