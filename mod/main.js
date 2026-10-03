@@ -18,7 +18,7 @@
 'use strict';
 
 var MOD_ID   = 'grandpas greenhouse';
-var VERSION  = '1.4';
+var VERSION  = '1.5';
 var PANEL_ID = 'grandpasGreenhousePanel';
 
 /* ------------------------------------------------------------------ *
