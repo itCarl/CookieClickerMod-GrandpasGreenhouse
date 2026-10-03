@@ -242,10 +242,10 @@ The panel's tab bar is one strip of wooden tabs, drawn from the game's own
 menu art:
 
 ```
-Off | Tend | Breed | Boost | Plant      Layouts | Settings
+Off | Tend | Breed | Boost | Plant | Unlocks      Layouts | Settings
 ```
 
-The five mode tabs set what the assistant does, and a mode tab is also the way
+The six mode tabs set what the assistant does, and a mode tab is also the way
 back to the assistant's view - there is no separate Assistant tab. **Layouts**
 and **Settings**, set a little apart, change what the panel shows and leave the
 mode alone; while one of them is open, the current mode keeps a marker so it is
@@ -262,6 +262,7 @@ tab and pick Plant. A save still set to the old Custom mode loads as Off.
 | **Breed** | Works towards one seed - yours from the seed picker, or its own pick. Lays out the plot and keeps it planted. |
 | **Boost** | Fills the plot with the layout that maximises a bonus you choose. |
 | **Plant** | Grows the layout you marked in the library, exactly as drawn. Sows it, replants what expires, leaves immortals be. |
+| **Unlocks** | Hunts the garden upgrades plants drop. Fills the plot with the banked species whose drop you are missing and harvests it as it matures, until every drop is unlocked. |
 
 ### Plant grows a layout as drawn
 
@@ -284,6 +285,33 @@ golden clover in between - is the kind of garden it is for.
   Layouts. Deleting the marked layout clears the mark.
 - A layout's breeding recipe and **Use for breeding** do not matter here: Plant
   grows the drawing as it is, linked or not.
+
+### Unlocks hunts the upgrade drops
+
+Seven plants drop a garden upgrade when harvested mature - Bakeberry cookies,
+Fern tea and the rest. Which plants, and at what chance, is not typed out here:
+nothing on a plant object says so, the drop is a call inside its `onHarvest`.
+So at startup the assistant calls each plant's own `onHarvest` once, as if
+harvested at maturity, with `M.dropUpgrade` swapped for a recorder - and every
+other function on `Game` and the garden swapped for one that does nothing, so a
+bakeberry's cookies or a juicy queenbeet's sugar lump are never paid out. All
+of them are put back afterwards, and `moddev/test.js` asserts nothing was
+unlocked, earned or planted, and that `main.js` names no upgrade at all.
+
+- **One species at a time, the best chance first.** At equal chances, the one
+  that matures in fewer garden steps. The whole plot goes to it: each drop is
+  an independent roll with no memory, so splitting the plot between hunts
+  finishes the set no sooner and only delays the first upgrade.
+- **Harvested the step it matures**, whatever *Harvest mature plants* says -
+  that harvest is when the drop rolls - and the tile is sown again at once.
+- **Only seeds you have banked are planted.** If every upgrade left drops from
+  a seed you have not unlocked, the status says which to breed first.
+- **Luck is not guessed at.** The plot is kept planted until the game grants the
+  upgrade. A dropped upgrade counts as found once it is in the store - buying
+  it is up to you - and the next species takes its place on the next step.
+- **Everything found, nothing planted.** The status reads *all garden upgrades
+  unlocked* and the plot is left alone.
+- Clearing, the spending cap and weeds work as in Breed, Boost and Plant.
 
 ### Boost is optimised against the real effect calculation
 
@@ -365,7 +393,7 @@ it through **Plant this** and the Plant mode.
 ## It asks before it takes anything
 
 Uprooting is the only thing here you can lose work to, so it is the only thing
-that waits for an answer. Switch to Breed, Boost or Plant with a garden already
+that waits for an answer. Switch to Breed, Boost, Plant or Unlocks with a garden already
 growing and the panel says so instead of acting:
 
 ```

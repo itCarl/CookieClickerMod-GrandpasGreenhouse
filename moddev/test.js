@@ -767,7 +767,7 @@ console.log('\nthe panel');
 	eq('nothing was logged as an error', errors.join(' | '), '');
 
 	var html = panel ? panel.innerHTML : '';
-	['Off', 'Tend', 'Breed', 'Boost', 'Plant'].forEach(function (label) {
+	['Off', 'Tend', 'Breed', 'Boost', 'Plant', 'Unlocks'].forEach(function (label) {
 		ok('the ' + label + ' button is there', html.indexOf('>' + label + '</div>') >= 0);
 	});
 	ok('there is a Settings tab', html.indexOf('data-act="tab" data-tab="settings"') >= 0);
@@ -776,7 +776,7 @@ console.log('\nthe panel');
 	// Hover help on the controls whose consequences are not obvious. The
 	// markup names the text (data-help = a HELP key, data-tip = literal text)
 	// and the game's own tooltip shows it; no native title is left anywhere.
-	ok('each mode button explains itself', (html.match(/data-act="mode"[^>]*data-tip="[^"]+"/g) || []).length === 5);
+	ok('each mode button explains itself', (html.match(/data-act="mode"[^>]*data-tip="[^"]+"/g) || []).length === 6);
 	ok('the progress readout has hover text', /id="ggProgress" data-help="progress"/.test(html));
 	ok('there is no Re-plan button: a soil change re-plans by itself',
 		html.indexOf('data-act="replan"') < 0 && html.indexOf('>Re-plan<') < 0 && !sb.mod.getHelp('replan'));
@@ -1457,10 +1457,10 @@ function plotKey(sb, x, y) {
 	}
 	eq('the Layouts tab renders without error', errors.join(' | '), '');
 	var panel = sb.dom.findCreated('grandpasGreenhousePanel').innerHTML;
-	// One tab bar: the five modes, Plant last and closing the mode strip, then
+	// One tab bar: the six modes, Unlocks last and closing the mode strip, then
 	// Layouts and Settings set apart; no Assistant or Custom tab.
 	ok('the title row carries the mode tabs, then Layouts and Settings, in one bar',
-		/class="ggTabs">(<div class="ggBtn ggTab" data-act="mode"[^>]*>[^<]+<\/div>){4}<div class="ggBtn ggTab ggTabEnd" data-act="mode" data-mode="plant"[^>]*>Plant<\/div><div class="ggBtn ggTab ggTabApart" data-act="tab" data-tab="layouts"[^>]*>Layouts<\/div><div class="ggBtn ggTab" data-act="tab" data-tab="settings"[^>]*>Settings<\/div><\/div>/.test(panel));
+		/class="ggTabs">(<div class="ggBtn ggTab" data-act="mode"[^>]*>[^<]+<\/div>){5}<div class="ggBtn ggTab ggTabEnd" data-act="mode" data-mode="unlocks"[^>]*>Unlocks<\/div><div class="ggBtn ggTab ggTabApart" data-act="tab" data-tab="layouts"[^>]*>Layouts<\/div><div class="ggBtn ggTab" data-act="tab" data-tab="settings"[^>]*>Settings<\/div><\/div>/.test(panel));
 	ok('there is no Custom tab any more', panel.indexOf('ggMode-custom') < 0 && panel.indexOf('>Custom<') < 0 &&
 		panel.indexOf('data-act="useLayout"') < 0);
 	ok('and no Re-plan button in the title row', panel.indexOf('data-act="replan"') < 0);
@@ -2607,8 +2607,9 @@ function standingOf(sb, cells) {
 	var panel = sb.dom.findCreated('grandpasGreenhousePanel').innerHTML;
 	ok('Plant is a mode tab, after Boost', panel.indexOf('id="ggMode-boost"') < panel.indexOf('id="ggMode-plant"') &&
 		panel.indexOf('id="ggMode-plant"') < panel.indexOf('id="ggTab-layouts"'));
-	ok('closing the mode strip', /ggTabEnd/.test(sb.dom.get('ggMode-plant').className) &&
-		!/ggTabEnd/.test(sb.dom.get('ggMode-boost').className));
+	// Plant closed the strip until Unlocks joined after it.
+	ok('followed by Unlocks, which closes the mode strip', /ggTabEnd/.test(sb.dom.get('ggMode-unlocks').className) &&
+		!/ggTabEnd/.test(sb.dom.get('ggMode-plant').className) && !/ggTabEnd/.test(sb.dom.get('ggMode-boost').className));
 	ok('lit while it is the mode', /ggOn/.test(sb.dom.get('ggMode-plant').className));
 	ok('with its hint as hover text', /data-mode="plant" data-tip="[^"]+"/.test(panel));
 	eq('the head names the layout', sb.dom.get('ggAsstHead').textContent, 'Planting "Field"');
@@ -2678,6 +2679,228 @@ function standingOf(sb, cells) {
 	sb.mod.runStepNow();
 	ok('a plot of another size re-plans', sb.mod.getPlan().key !== before);
 	sb.M.isTileUnlocked = real;
+})();
+
+/* ------------------------------------------------------------------ *
+ * 12. Unlocks mode
+ *
+ * Some plants drop a garden upgrade when harvested mature. Which ones, and
+ * at what chance, is read out of the plants' own onHarvest functions at
+ * startup - the mod carries no table of its own. The names below are the
+ * test's truth, copied from minigameGarden.js.
+ * ------------------------------------------------------------------ */
+console.log('\nunlocks mode');
+
+var DROPS = {bakerWheat: ['Wheat slims', 0.001], elderwort: ['Elderwort biscuits', 0.01],
+	bakeberry: ['Bakeberry cookies', 0.015], drowsyfern: ['Fern tea', 0.01],
+	duketater: ['Duketater cookies', 0.005], greenRot: ['Green yeast digestives', 0.005],
+	ichorpuff: ['Ichor syrup', 0.005]};
+
+function allDropNames() {
+	var out = [];
+	for (var k in DROPS) out.push(DROPS[k][0]);
+	return out;
+}
+
+/** A bare plot in Unlocks mode, `unlocked` banked, the upgrades in `owned` already bought. */
+function hunter(seed, unlocked, owned) {
+	var sb = library(seed, unlocked);
+	var have = {};
+	(owned || []).forEach(function (n) { have[n] = true; });
+	sb.owned = have;
+	sb.Game.Has = function (n) { return !!have[n]; };
+	sb.mod.setMode('unlocks');
+	return sb;
+}
+
+/** The species on every unlocked tile of a grid, as a sorted, de-duplicated list. */
+function speciesIn(sb, grid) {
+	var seen = {};
+	for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) {
+		if (sb.M.isTileUnlocked(x, y)) seen[grid[y][x] || '(empty)'] = 1;
+	}
+	return Object.keys(seen).sort().join(',');
+}
+
+/** The plot as a grid of species keys. */
+function plotGrid(sb) {
+	return sb.M.plot.map(function (row, y) { return row.map(function (t, x) { return plotKey(sb, x, y); }); });
+}
+
+function sownCount(sb) {
+	var any = 0;
+	for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) if (sb.M.plot[y][x][0]) any++;
+	return any;
+}
+
+var MAIN_SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 'mod', 'main.js'), 'utf8');
+
+(function () {
+	// (1) The prober finds every drop in the game source, and leaves no trace.
+	var sb = library(300);
+	var unlocks = 0, earns = 0, lumps = 0, popups = 0;
+	sb.Game.Unlock = function () { unlocks++; };
+	sb.Game.gainLumps = function () { lumps++; };
+	sb.Game.Popup = function () { popups++; };
+	var realEarn = sb.Game.Earn;
+	sb.Game.Earn = function (n) { earns++; realEarn(n); };
+	var earnFn = sb.Game.Earn, dropFn = sb.M.dropUpgrade, unlockFn = sb.Game.Unlock;
+	var plotBefore = JSON.stringify(sb.M.plot), cookiesBefore = sb.Game.cookies;
+	var drops = sb.mod.getDrops();
+	ok('the drop table was built', !!drops);
+	drops = drops || {};
+	for (var k in DROPS) {
+		var list = drops[k] || [];
+		var hit = list.filter(function (d) { return d.upgrade === DROPS[k][0]; })[0];
+		ok(sb.M.plants[k].name + ' drops ' + DROPS[k][0], !!hit, JSON.stringify(list));
+		near('at ' + DROPS[k][1] * 100 + '% a mature harvest', hit ? hit.chance : -1, DROPS[k][1], 1e-12);
+	}
+	eq('and nothing else drops an upgrade', Object.keys(drops).sort().join(','), Object.keys(DROPS).sort().join(','));
+	eq('probing unlocked nothing', unlocks, 0);
+	eq('earned nothing', earns, 0);
+	eq('found no sugar lump', lumps, 0);
+	eq('showed no popup', popups, 0);
+	eq('left the cookies alone', sb.Game.cookies, cookiesBefore);
+	eq('and the plot', JSON.stringify(sb.M.plot), plotBefore);
+	ok('every function it borrowed is back', sb.M.dropUpgrade === dropFn && sb.Game.Earn === earnFn &&
+		sb.Game.Unlock === unlockFn);
+
+	var named = allDropNames().filter(function (n) { return MAIN_SRC.indexOf(n) >= 0; });
+	eq('main.js names no upgrade - the table is read, not typed', named.join(', '), '');
+})();
+
+(function () {
+	// (2) Only banked species with an upgrade still missing are planted, best chance first.
+	var sb = hunter(301, ['bakerWheat', 'bakeberry', 'chocoroot']);
+	sb.step();                                         // the hook's first look only takes note
+	sb.step();
+	var plan = sb.mod.getPlan();
+	ok('a plan is made', !!plan && !!plan.grid);
+	eq('it fills the plot with bakeberry, the best chance', plan && plan.grid && speciesIn(sb, plan.grid), 'bakeberry');
+	ok('keyed as an unlocks plan', !!plan && /^unlocks:/.test(plan.key), plan && plan.key);
+	eq('and the plot is sown with it', speciesIn(sb, plotGrid(sb)), 'bakeberry');
+
+	// Locked species are not planted, however good their chance.
+	var sb2 = hunter(302, ['bakerWheat', 'chocoroot'], ['Wheat slims']);
+	sb2.mod.runStepNow();
+	ok('no drop left among banked seeds: nothing is planned', !sb2.mod.getPlan() || !sb2.mod.getPlan().grid);
+	eq('and nothing is sown', sownCount(sb2), 0);
+
+	// Equal chances: the quicker to mature wins - elderwort over drowsyfern.
+	var sb3 = hunter(303, ['elderwort', 'drowsyfern', 'bakeberry'], ['Bakeberry cookies']);
+	sb3.mod.runStepNow();
+	eq('at equal odds the faster grower is planted', speciesIn(sb3, sb3.mod.getPlan().grid), 'elderwort');
+})();
+
+(function () {
+	// (3) Mature hunters are harvested even with harvestMature off.
+	var sb = hunter(304, ['bakeberry']);
+	sb.mod.getSettings().harvestMature = false;
+	var tiles = [];
+	for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) if (sb.M.isTileUnlocked(x, y)) tiles.push([x, y]);
+	tiles.forEach(function (t) { sb.plant('bakeberry', t[0], t[1]); });   // all mature
+	sb.plant('bakeberry', tiles[0][0], tiles[0][1], 1);                   // ...but one
+	var rolled = 0, realDrop = sb.M.dropUpgrade;
+	sb.M.dropUpgrade = function (name, rate) { if (name === 'Bakeberry cookies') rolled++; return realDrop(name, rate); };
+	var before = sb.mod.getStats().harvested;
+	sb.mod.runStepNow();
+	eq('every mature bakeberry is harvested', sb.mod.getStats().harvested - before, tiles.length - 1);
+	eq('each harvest rolls the drop through the game', rolled, tiles.length - 1);
+	eq('the young one is left to ripen', sb.M.plot[tiles[0][1]][tiles[0][0]][1], 1);
+	eq('and the freed tiles are replanted at once', sb.M.plot[tiles[1][1]][tiles[1][0]][1], 0);
+	eq('with a fresh bakeberry', plotKey(sb, tiles[1][0], tiles[1][1]), 'bakeberry');
+
+	// Tend, with the same setting, leaves mature plants alone - this is the mode's doing.
+	var sb2 = hunter(305, ['bakeberry']);
+	sb2.mod.getSettings().harvestMature = false;
+	sb2.mod.setMode('tend');
+	sb2.plant('bakeberry', 0, 0);
+	sb2.mod.runStepNow();
+	eq('Tend leaves a mature bakeberry with harvestMature off', plotKey(sb2, 0, 0), 'bakeberry');
+})();
+
+(function () {
+	// (4) Buying the upgrade re-plans, and its species leaves the plan.
+	var sb = hunter(306, ['bakerWheat', 'bakeberry']);
+	sb.mod.runStepNow();
+	var key = sb.mod.getPlan().key;
+	eq('bakeberry is hunted first', speciesIn(sb, sb.mod.getPlan().grid), 'bakeberry');
+	sb.owned['Bakeberry cookies'] = true;
+	sb.mod.runStepNow();
+	ok('owning its upgrade changes the plan key', sb.mod.getPlan().key !== key, sb.mod.getPlan().key);
+	eq('and wheat takes its place', speciesIn(sb, sb.mod.getPlan().grid), 'bakerWheat');
+
+	// An upgrade the drop put in the store, not yet bought, counts as found too.
+	var sb2 = hunter(307, ['bakerWheat', 'bakeberry']);
+	sb2.Game.HasUnlocked = function (n) { return n === 'Bakeberry cookies'; };
+	sb2.mod.runStepNow();
+	eq('an unlocked-but-unbought upgrade is not hunted again', speciesIn(sb2, sb2.mod.getPlan().grid), 'bakerWheat');
+})();
+
+(function () {
+	// (5) Everything owned: no plan, an honest status, and nothing sown.
+	var sb = hunter(308, Object.keys(DROPS), allDropNames());
+	sb.mod.runStepNow();
+	var plan = sb.mod.getPlan();
+	ok('the plan is empty', !plan || !plan.grid);
+	eq('the status says so', sb.mod.getStatus(), 'all garden upgrades unlocked');
+	eq('and the plot stays bare', sownCount(sb), 0);
+	sb.mod.runStepNow();
+	eq('it stays idle on later steps', sb.mod.getStatus(), 'all garden upgrades unlocked');
+})();
+
+(function () {
+	// (6) Only locked species left: the status points to breeding.
+	var sb = hunter(309, ['bakerWheat', 'chocoroot'], ['Wheat slims']);
+	sb.mod.runStepNow();
+	ok('the status names the seed to breed first', /^breed Bakeberry first to hunt its upgrade/.test(sb.mod.getStatus()),
+		sb.mod.getStatus());
+	ok('and how many more wait on locked seeds', /5 more/.test(sb.mod.getStatus()), sb.mod.getStatus());
+})();
+
+(function () {
+	// (7) The mode survives a save; old saves are untouched.
+	var sb = hunter(310, ['bakeberry']);
+	var sb2 = library(311);
+	sb2.mod.load(sb.mod.save());
+	eq('Unlocks mode survives a save', sb2.mod.getSettings().mode, 'unlocks');
+	var sb3 = library(312);
+	sb3.mod.load(JSON.stringify({v: 2, S: {mode: 'plant'}}));
+	eq('an older save keeps its own mode', sb3.mod.getSettings().mode, 'plant');
+})();
+
+(function () {
+	// (8) The tab bar, the pane and the Settings page.
+	var errors = [];
+	var realError = console.error;
+	console.error = function () { errors.push(Array.prototype.join.call(arguments, ' ')); };
+	var sb;
+	try {
+		sb = hunter(313, ['bakerWheat', 'bakeberry']);
+		sb.step();
+		sb.step();
+	} finally {
+		console.error = realError;
+	}
+	eq('Unlocks mode renders without error', errors.join(' | '), '');
+	var panel = sb.dom.findCreated('grandpasGreenhousePanel').innerHTML;
+	eq('the bar carries six mode tabs', (panel.match(/data-act="mode"/g) || []).length, 6);
+	ok('Unlocks comes after Plant', panel.indexOf('id="ggMode-plant"') < panel.indexOf('id="ggMode-unlocks"') &&
+		panel.indexOf('id="ggMode-unlocks"') < panel.indexOf('id="ggTab-layouts"'));
+	ok('and closes the mode strip', /ggTabEnd/.test(sb.dom.get('ggMode-unlocks').className));
+	ok('lit while it is the mode', /ggOn/.test(sb.dom.get('ggMode-unlocks').className));
+	ok('with its hint as hover text', /data-mode="unlocks" data-tip="[^"]+"/.test(panel));
+	eq('the head names the upgrade hunted', sb.dom.get('ggAsstHead').textContent, 'Hunting Bakeberry cookies');
+	eq('the choice row folds away', sb.dom.get('ggChoiceRow').style.display, 'none');
+	ok('the pane line gives species and chance', /Bakeberry/.test(sb.dom.get('ggRecipe').textContent) &&
+		/1\.5%/.test(sb.dom.get('ggRecipe').textContent), sb.dom.get('ggRecipe').textContent);
+
+	sb.mod.setTab('settings');
+	sb.step();
+	var hint = sb.dom.get('ggModeHint').textContent;
+	ok('the Settings page names Unlocks mode', /^Working in Unlocks: /.test(hint), hint);
+	ok('and says mature plants are harvested whatever the toggle', /harvest/i.test(hint) && /regardless/.test(hint), hint);
+	ok('the CSS is sized for eight planks', /Sized for eight in a row/.test(MAIN_SRC));
 })();
 
 /* ------------------------------------------------------------------ */

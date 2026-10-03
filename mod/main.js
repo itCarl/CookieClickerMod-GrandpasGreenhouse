@@ -37,7 +37,12 @@ var MODES = [
 		hint:'Fills the plot with the layout that maximises the bonus you pick.'},
 	{key:'plant', label:'Plant',
 		hint:'Grows the layout you marked with Plant this in Layouts, exactly as drawn. Sows it, ' +
-			 'replants what expires, leaves immortals be.'}
+			 'replants what expires, leaves immortals be.'},
+	{key:'unlocks', label:'Unlocks',
+		hint:'Hunts the garden upgrades that plants drop. Fills the plot with the banked species whose ' +
+			 'drop you are still missing, best chance first, and harvests it as it matures - regardless ' +
+			 'of the harvest-mature setting, because that harvest is when the drop rolls. Stops once ' +
+			 'every drop is unlocked.'}
 ];
 
 // M.effs keys, from computeEffs(). buildingCost is a cost, so lower is better.
@@ -70,7 +75,7 @@ function isMode(key) {
 
 /** The modes that keep a layout planted, as opposed to only tending what is there. */
 function layoutMode() {
-	return S.mode === 'breed' || S.mode === 'boost' || S.mode === 'plant';
+	return S.mode === 'breed' || S.mode === 'boost' || S.mode === 'plant' || S.mode === 'unlocks';
 }
 
 /* ------------------------------------------------------------------ *
@@ -129,6 +134,7 @@ S.layouts = [];
 
 var recipes    = null;  // targetKey -> [{target, chance, parents:[{key,n}], ceilings:{}}]
 var recipesFor = null;  // built once, from the game's own getMuts
+var drops      = null;  // plantKey -> [{upgrade, chance}], read once from the plants' onHarvest
 var plan       = null;  // {grid:[[key|'']], score, label, key}
 var lastStep   = -1;
 // The soil the plan was last made on, or null before the first look. Soil
@@ -140,6 +146,7 @@ var lastPanelRefresh = 0;   // when the per-frame panel refresh last ran
 var statusText = 'waiting for the garden';
 var STUCK_MSG  = 'stuck - immortal plants block the weed nursery and nothing you can sow leads anywhere new';
 var NO_PLANT_MSG = 'no layout active - pick one in Layouts';
+var ALL_DROPS_MSG = 'all garden upgrades unlocked';
 var stats      = {harvested:0, planted:0, banked:0, uprooted:0};
 var seedGridKey = '';   // what the seed picker was last drawn for
 // planKey -> 'clear' | 'keep'. Deliberately keyed by plan and deliberately not
@@ -1017,6 +1024,128 @@ function planBoost(m, objKey) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Upgrade drops, read out of the game
+ * ------------------------------------------------------------------ */
+
+/**
+ * A few plants drop a garden upgrade when harvested mature. Nothing on the
+ * plant object says which: the drop is one line inside its onHarvest, a call
+ * to M.dropUpgrade(name, chance). So, as with getMuts, the game is asked
+ * rather than transcribed - each plant's own onHarvest is called once, as if
+ * harvested at maturity, with M.dropUpgrade swapped for a recorder. If Orteil
+ * adds a drop or retunes one, this follows without an edit.
+ *
+ * Called for real, a harvest hook pays out: a bakeberry earns cookies, a
+ * juicy queenbeet finds a sugar lump. So for the length of the probe every
+ * function on Game and on the garden is swapped for one that does nothing,
+ * and every one is put back in the finally, whatever the hooks did. They run
+ * synchronously, so nothing else in the game can see the swap. A hook that
+ * throws on the stubs has still recorded any drop it reached before it threw.
+ */
+function buildDrops(m) {
+	var found = {}, current = null, swapped = [];
+	function noop() {}
+	function stubAll(obj) {
+		for (var k in obj) {
+			if (!Object.prototype.hasOwnProperty.call(obj, k) || typeof obj[k] !== 'function') continue;
+			var real = obj[k];
+			try { obj[k] = noop; swapped.push([obj, k, real]); } catch (err) { /* read-only: leave it */ }
+		}
+	}
+	try {
+		stubAll(Game);
+		stubAll(m);
+		m.dropUpgrade = function (upgrade, chance) {
+			if (!current || typeof upgrade !== 'string' || !(chance > 0)) return;
+			(found[current] || (found[current] = [])).push({upgrade: upgrade, chance: chance});
+		};
+		for (var key in m.plants) {
+			var p = m.plants[key];
+			if (typeof p.onHarvest !== 'function') continue;
+			current = key;
+			try { p.onHarvest(0, 0, matureAge(p)); } catch (err) { /* see above */ }
+		}
+	} finally {
+		current = null;
+		for (var i = swapped.length - 1; i >= 0; i--) swapped[i][0][swapped[i][1]] = swapped[i][2];
+	}
+	return found;
+}
+
+function ensureDrops(m) {
+	if (drops) return drops;
+	drops = buildDrops(m);
+	return drops;
+}
+
+/**
+ * Whether an upgrade no longer needs hunting: bought, or dropped into the
+ * store and waiting to be bought. The game's own dropUpgrade only checks
+ * Game.Has, so a harvest would keep rolling for one already in the store -
+ * but rolling again cannot help, buying it is the player's step.
+ */
+function upgradeFound(name) {
+	if (typeof Game.Has === 'function' && Game.Has(name)) return true;
+	return typeof Game.HasUnlocked === 'function' && !!Game.HasUnlocked(name);
+}
+
+/**
+ * Every species with a drop still missing, ranked, split by whether its seed
+ * is banked: {open: [...], locked: [...]}, each entry {key, name, upgrades,
+ * chance, steps}. Two drops on one plant would be two rolls, so its chance is
+ * the odds of either.
+ *
+ * The ranking is deliberately simple: the higher drop chance first, and at
+ * equal chances the species that matures in fewer garden steps, since it
+ * rolls more often. The whole plot goes to the top species. Each drop is an
+ * independent roll with no memory, so splitting the plot between hunts does
+ * not finish the set any sooner - it only delays the first one.
+ */
+function huntList(m) {
+	var d = ensureDrops(m), open = [], locked = [];
+	for (var key in d) {
+		var p = m.plants[key];
+		if (!p || !p.plantable) continue;
+		var missing = [], none = 1;
+		for (var i = 0; i < d[key].length; i++) {
+			if (upgradeFound(d[key][i].upgrade)) continue;
+			missing.push(d[key][i].upgrade);
+			none *= 1 - d[key][i].chance;
+		}
+		if (!missing.length) continue;
+		var entry = {key: key, name: p.name, upgrades: missing, chance: 1 - none,
+			steps: matureAge(p) / ageStep(p)};
+		(p.unlocked ? open : locked).push(entry);
+	}
+	var rank = function (a, b) { return (b.chance - a.chance) || (a.steps - b.steps); };
+	open.sort(rank);
+	locked.sort(rank);
+	return {open: open, locked: locked};
+}
+
+/** The species Unlocks mode harvests the moment they mature, as a set; null in any other mode. */
+function huntSet(m) {
+	if (S.mode !== 'unlocks') return null;
+	var h = huntList(m), out = {};
+	for (var i = 0; i < h.open.length; i++) out[h.open[i].key] = true;
+	return out;
+}
+
+function upgradeCount(list) {
+	var n = 0;
+	for (var i = 0; i < list.length; i++) n += list[i].upgrades.length;
+	return n;
+}
+
+/** What Unlocks mode says when there is nothing it can plant. */
+function huntIdleText(h) {
+	if (!h.locked.length) return ALL_DROPS_MSG;
+	var first = h.locked[0], more = upgradeCount(h.locked) - first.upgrades.length;
+	return 'breed ' + first.name + ' first to hunt ' + (first.upgrades.length === 1 ? 'its upgrade' : 'its upgrades') +
+		(more ? ' - ' + more + ' more wait on seeds you have not unlocked' : '');
+}
+
+/* ------------------------------------------------------------------ *
  * Keeping the plan current
  * ------------------------------------------------------------------ */
 
@@ -1047,7 +1176,25 @@ function wantedPlanKey(m) {
 	}
 	if (S.mode === 'boost') return 'boost:' + S.objective + ':' + unlockedTiles(m).length;
 	if (S.mode === 'plant') return plantPlanKey(m);
+	if (S.mode === 'unlocks') return unlocksPlanKey(m);
 	return 'none';
+}
+
+/**
+ * Unlocks mode's key names the species it can hunt and every upgrade still
+ * missing, so buying one - or banking a seed that drops one - re-plans on the
+ * next look. Nothing about luck is in it: a drop that has not come yet is
+ * simply the same plan, kept planted until the game grants it.
+ */
+function unlocksPlanKey(m) {
+	var h = huntList(m), open = [], missing = [];
+	for (var i = 0; i < h.open.length; i++) {
+		open.push(h.open[i].key);
+		missing = missing.concat(h.open[i].upgrades);
+	}
+	for (var i = 0; i < h.locked.length; i++) missing = missing.concat(h.locked[i].upgrades);
+	if (!missing.length) return 'unlocks:done';
+	return 'unlocks:' + unlockedTiles(m).length + ':' + open.join(',') + ':' + missing.sort().join('|');
 }
 
 /**
@@ -1131,6 +1278,20 @@ function rebuildPlan(m, force) {
 			return null;
 		}
 		plan = {grid: sowableCopy(m, lay.grid), score: 0, key: want, label: lay.name, layout: lay.name};
+	} else if (S.mode === 'unlocks') {
+		// The top species on every tile (see huntList for why not a mix).
+		// With nothing banked left to hunt there is no grid at all, so the
+		// plot is left alone - an empty grid would ask to clear it.
+		var h = huntList(m);
+		if (!h.open.length) {
+			plan = {grid: null, score: 0, key: want, label: 'Unlocks', idle: huntIdleText(h), locked: h.locked};
+			statusText = plan.idle;
+			return plan;
+		}
+		var top = h.open[0], g = emptyGrid(), tiles = unlockedTiles(m);
+		for (var t = 0; t < tiles.length; t++) g[tiles[t][1]][tiles[t][0]] = top.key;
+		plan = {grid: g, score: top.chance, key: want, label: top.name, hunt: top, locked: h.locked,
+			left: upgradeCount(h.open) + upgradeCount(h.locked)};
 	} else {
 		plan = null;
 	}
@@ -1789,13 +1950,16 @@ function plantAt(m, p, x, y, budget) {
  * which takes it this step without asking - it was going to die this cycle
  * anyway. With that setting off nothing else would take it, so it is listed
  * like any other.
+ *
+ * In Unlocks mode a mature plant of a hunted species is never listed either:
+ * runStep harvests it without asking, because that harvest rolls its drop.
  */
 function removalsFor(m) {
 	var out = [];
 	if (!layoutMode()) return out;
 	if (!plan || !plan.grid || !S.keepPlan) return out;
 
-	var grid = plan.grid, nursery = !!plan.nursery, tiles = unlockedTiles(m);
+	var grid = plan.grid, nursery = !!plan.nursery, tiles = unlockedTiles(m), hunting = huntSet(m);
 	for (var t = 0; t < tiles.length; t++) {
 		var x = tiles[t][0], y = tiles[t][1], tile = m.plot[y][x];
 		var p = plantOf(m, tile);
@@ -1805,6 +1969,7 @@ function removalsFor(m) {
 		var age = tile[1], mature = age >= p.mature;
 		if (!mature && !nursery && !S.clearImmediately) continue;
 		if (mature && age >= harvestAgeOf(p) && S.harvestMature) continue;
+		if (mature && hunting && hunting[p.key]) continue;
 		out.push({x: x, y: y, key: p.key, name: p.name, mature: mature});
 	}
 	return out;
@@ -1833,6 +1998,7 @@ function runStep(m) {
 	var grid = layoutMode() ? (plan && plan.grid) : null;
 	var nursery = !!(plan && plan.nursery);
 	var tiles = unlockedTiles(m);
+	var hunting = huntSet(m);
 	var t, x, y;
 
 	// Uprooting is the only thing here a player can lose work to, so it is the
@@ -1859,6 +2025,12 @@ function runStep(m) {
 		// did not ask for must be left alone until it ripens - it is the seed
 		// the layout exists to produce.
 		if (!p.unlocked) continue;
+
+		// Unlocks mode exists for this harvest: a drop only rolls when a
+		// mature plant is harvested, so a hunted species is taken the step it
+		// matures, whatever harvestMature says - and its tile is sown again
+		// below, in the same step.
+		if (hunting && mature && hunting[p.key]) { harvestAt(m, x, y); continue; }
 
 		if (p.weed) {
 			// Meddleweed is the gateway to the whole fungus branch: uprooting it
@@ -1895,6 +2067,7 @@ function runStep(m) {
 		// banked and ripe weeds still pulled - only planting has nothing to do.
 		if (plan && plan.stuck) statusText = STUCK_MSG;
 		else if (S.mode === 'plant' && !grid) statusText = NO_PLANT_MSG;
+		else if (S.mode === 'unlocks' && !grid) statusText = (plan && plan.idle) || ALL_DROPS_MSG;
 		else statusText = (S.mode === 'tend') ? 'tending' : 'no layout - nothing planted';
 		return;
 	}
@@ -2030,7 +2203,7 @@ return [
 	'#' + PANEL_ID + ' .ggPane .ggAlert{margin:0;}',
 	'#' + PANEL_ID + ' .ggAlertText{color:#ffd75e;font-size:13px;}',
 
-	// One tab bar: the five modes, then Layouts and Settings. A mode tab is both "show the
+	// One tab bar: the six modes, then Layouts and Settings. A mode tab is both "show the
 	// assistant" and "work this way", so a separate Assistant tab above them
 	// only added a click.
 	// No gap between the modes: the strip is one connected bar of planks, the
@@ -2052,8 +2225,11 @@ return [
 	// Tabs after the first pull 1px left, so their 1px fallback borders
 	// overlap into one shared line, and position:relative lets the open tab
 	// stack above its neighbours to show its own edges.
-	// Sized for seven in a row: narrow planks and the smaller type, with the
+	// Sized for eight in a row: narrow planks and the smaller type, with the
 	// crop 2px down the plank to keep the grain centred on the short tab.
+	// Eight 64px planks make a strip of about 512px, which the title row
+	// holds beside the title; the row wraps rather than overflows, so on a
+	// narrow window the seed count drops to a line of its own.
 	'#' + PANEL_ID + ' .ggBtn.ggTab{box-sizing:border-box;width:64px;text-align:center;margin:0 0 0 -1px;',
 	'position:relative;padding:3px 0 2px 0;font-size:12px;line-height:100%;',
 	'font-weight:normal;color:#d8d2c6;border-radius:0;',
@@ -2099,14 +2275,14 @@ return [
 	'#' + PANEL_ID + ' .ggBtn.ggTab:has(+ .ggOn){border-image-width:3px 0 0 0;}',
 	'#' + PANEL_ID + ' .ggBtn.ggTab:first-child:has(+ .ggOn){border-image-width:3px 0 0 3px;}',
 	// Layouts and Settings stand a few pixels apart at the end of the bar: the
-	// five modes change what the assistant does, these two only what the panel
+	// six modes change what the assistant does, these two only what the panel
 	// shows. So the gap closes the mode run with its own corner and edge
-	// (Plant, the last mode) and opens Layouts with one, as if each were a
+	// (Unlocks, the last mode) and opens Layouts with one, as if each were a
 	// strip's end.
 	// Plain classes rather than :has(), so the gap looks right everywhere.
-	// Plant keeps its right edge even while Layouts is lit - there is no
+	// Unlocks keeps its right edge even while Layouts is lit - there is no
 	// shared divider across the gap to hand over - hence the :not(.ggOn)
-	// rule after the :has ones, and .ggOn's own full frame when Plant is lit.
+	// rule after the :has ones, and .ggOn's own full frame when Unlocks is lit.
 	'#' + PANEL_ID + ' .ggBtn.ggTab.ggTabEnd{border-top-right-radius:3px;}',
 	'#' + PANEL_ID + ' .ggBtn.ggTab.ggTabEnd:not(.ggOn){border-image-width:3px 3px 0 0;}',
 	'#' + PANEL_ID + ' .ggBtn.ggTab.ggTabApart{margin-left:6px;border-top-left-radius:3px;',
@@ -2312,6 +2488,7 @@ var HELP = {
 	stopUse:  'Stop using this layout for its recipe. It stays in your library, still marked with the seed it was made for, and the assistant goes back to its own.',
 	useBreed: 'Have the assistant plant this layout in place of its own whenever it breeds this seed with this recipe on a plot this size. Any other layout in use for the same recipe is taken out of use.',
 	plantThis:'Make this the layout Plant mode grows, exactly as drawn: empty tiles are sown, expired plants replanted, immortals left be. One layout at a time - this takes the mark from any other. Switch to the Plant tab to start.',
+	unlocks:  'Some plants drop a garden upgrade when harvested mature. Which ones, and at what chance, is read out of the plants themselves at startup. The plot goes to the banked species with the best chance, at equal chances the one that matures in fewer steps, and all of it to one species at a time: every drop is a fresh roll, so splitting the plot only delays the first. A seed you have not banked is not planted - breed it first. Luck is not guessed at; the plot is simply kept planted until the game grants the upgrade.',
 	stopPlant:'Stop growing this layout in Plant mode. It stays in your library; Plant mode has nothing to grow until you mark another.',
 	badge:    'The seed this layout was made for - breeding it with this recipe on a plot of this size. Green while it is in use and stands in for the assistant\'s own layout.',
 	libDefault:'The assistant\'s layout for breeding this seed on your plot as it is now. It is worked out when you open it and never saved, so it keeps up as your plot grows. Paint a tile or press any button and it becomes a layout of your own, which then takes its place here; delete that and this default comes back.',
@@ -2508,9 +2685,9 @@ function esc(s) {
  * (the preview, its colour key and how the garden is doing) rather than
  * above it, because the bottom bar is short and wide and stacking them would
  * push the status off its bottom. The modes without a choice (Off, Tend,
- * Plant - whose layout is picked in Layouts) hide the choice rows and leave
- * one line of text, so the frame is the same in all five and only its
- * contents change.
+ * Plant - whose layout is picked in Layouts - and Unlocks) hide the choice
+ * rows and leave one line of text, so the frame is the same in all six and
+ * only its contents change.
  *
  * The preview is a picture, not an editor: breed layouts are reshaped in the
  * Layouts tab, so there is one place a layout changes and one answer to what
@@ -2931,6 +3108,22 @@ function overrideDelta(p) {
 	return '(your layout: ' + (d >= 0 ? '+' : '') + (d * 100).toFixed(0) + '% vs the assistant)';
 }
 
+/** Unlocks mode's line in the assistant's pane. */
+function huntText(m) {
+	if (!plan) return modeByKey('unlocks').hint;
+	var names = [];
+	for (var i = 0; plan.locked && i < plan.locked.length; i++) names.push(plan.locked[i].name);
+	var later = names.length ? ' Bank ' + names.join(', ') + ' to hunt ' +
+		(upgradeCount(plan.locked) === 1 ? 'the upgrade it drops' : 'the upgrades they drop') + ' - Breed mode can.' : '';
+	if (!plan.hunt) {
+		return names.length ? 'Every upgrade left drops from a seed you have not banked yet.' + later
+			: 'Every garden upgrade a plant can drop is unlocked. Nothing left to hunt.';
+	}
+	return 'Growing ' + plan.hunt.name + ' on every tile and harvesting it as it matures: ' +
+		fmtPct(plan.hunt.chance) + ' a mature harvest to drop ' + plan.hunt.upgrades.join(' and ') + '. ' +
+		plan.left + ' garden upgrade' + (plan.left === 1 ? '' : 's') + ' still to find.' + later;
+}
+
 function refreshPanel() {
 	var m = garden();
 	if (!m || !document.getElementById(PANEL_ID)) return;
@@ -2970,6 +3163,7 @@ function refreshPanel() {
 		headText = ht ? 'Breeding ' + ht : 'Breeding';
 	} else if (S.mode === 'boost') headText = 'Boosting';
 	else if (S.mode === 'plant') headText = (plan && plan.layout) ? 'Planting "' + plan.layout + '"' : 'Planting';
+	else if (S.mode === 'unlocks') headText = (plan && plan.hunt) ? 'Hunting ' + plan.hunt.upgrades.join(', ') : 'Unlocks';
 	else if (S.mode === 'tend') headText = 'Tending';
 	setText('ggAsstHead', headText);
 
@@ -3031,8 +3225,11 @@ function refreshPanel() {
 		choiceRow.style.display = 'none';
 		seedRow.style.display = 'none';
 		// Plant has no choice of its own - the layout is picked in Layouts -
-		// so its line says which one, or where to pick one.
-		if (S.mode === 'plant') {
+		// so its line says which one, or where to pick one. Unlocks has none
+		// either: its line says what is hunted and how much is left.
+		setHelp('ggRecipe', S.mode === 'unlocks' ? 'unlocks' : '');
+		if (S.mode === 'unlocks') setText('ggRecipe', huntText(m));
+		else if (S.mode === 'plant') {
 			setText('ggRecipe', (plan && plan.layout)
 				? 'Growing your layout "' + plan.layout + '" exactly as drawn. Change it, or mark another, ' +
 					'in the Layouts tab.'
@@ -3477,6 +3674,7 @@ Game.registerMod(MOD_ID, {
 	getSnapshotChance: function (counts, key) {
 		var m = garden(); return m ? snapshotChance(m, fillCounts(m, counts), key) : 0;
 	},
+	getDrops:    function () { var m = garden(); return m ? ensureDrops(m) : null; },
 	getRecipe:   function (key) { var m = garden(); return m ? bestRecipeFor(m, key) : null; },
 	getPlan:     function () { return plan; },
 	getSettings: function () { return S; },
