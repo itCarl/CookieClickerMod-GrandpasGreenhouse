@@ -767,7 +767,7 @@ console.log('\nthe panel');
 	eq('nothing was logged as an error', errors.join(' | '), '');
 
 	var html = panel ? panel.innerHTML : '';
-	['Off', 'Tend', 'Breed', 'Boost'].forEach(function (label) {
+	['Off', 'Tend', 'Breed', 'Boost', 'Plant'].forEach(function (label) {
 		ok('the ' + label + ' button is there', html.indexOf('>' + label + '</div>') >= 0);
 	});
 	ok('there is a Settings tab', html.indexOf('data-act="tab" data-tab="settings"') >= 0);
@@ -776,7 +776,7 @@ console.log('\nthe panel');
 	// Hover help on the controls whose consequences are not obvious. The
 	// markup names the text (data-help = a HELP key, data-tip = literal text)
 	// and the game's own tooltip shows it; no native title is left anywhere.
-	ok('each mode button explains itself', (html.match(/data-act="mode"[^>]*data-tip="[^"]+"/g) || []).length === 4);
+	ok('each mode button explains itself', (html.match(/data-act="mode"[^>]*data-tip="[^"]+"/g) || []).length === 5);
 	ok('the progress readout has hover text', /id="ggProgress" data-help="progress"/.test(html));
 	ok('there is no Re-plan button: a soil change re-plans by itself',
 		html.indexOf('data-act="replan"') < 0 && html.indexOf('>Re-plan<') < 0 && !sb.mod.getHelp('replan'));
@@ -1457,10 +1457,10 @@ function plotKey(sb, x, y) {
 	}
 	eq('the Layouts tab renders without error', errors.join(' | '), '');
 	var panel = sb.dom.findCreated('grandpasGreenhousePanel').innerHTML;
-	// One tab bar: the four modes, the last closing the mode strip, then
+	// One tab bar: the five modes, Plant last and closing the mode strip, then
 	// Layouts and Settings set apart; no Assistant or Custom tab.
 	ok('the title row carries the mode tabs, then Layouts and Settings, in one bar',
-		/class="ggTabs">(<div class="ggBtn ggTab" data-act="mode"[^>]*>[^<]+<\/div>){3}<div class="ggBtn ggTab ggTabEnd" data-act="mode" data-mode="boost"[^>]*>Boost<\/div><div class="ggBtn ggTab ggTabApart" data-act="tab" data-tab="layouts"[^>]*>Layouts<\/div><div class="ggBtn ggTab" data-act="tab" data-tab="settings"[^>]*>Settings<\/div><\/div>/.test(panel));
+		/class="ggTabs">(<div class="ggBtn ggTab" data-act="mode"[^>]*>[^<]+<\/div>){4}<div class="ggBtn ggTab ggTabEnd" data-act="mode" data-mode="plant"[^>]*>Plant<\/div><div class="ggBtn ggTab ggTabApart" data-act="tab" data-tab="layouts"[^>]*>Layouts<\/div><div class="ggBtn ggTab" data-act="tab" data-tab="settings"[^>]*>Settings<\/div><\/div>/.test(panel));
 	ok('there is no Custom tab any more', panel.indexOf('ggMode-custom') < 0 && panel.indexOf('>Custom<') < 0 &&
 		panel.indexOf('data-act="useLayout"') < 0);
 	ok('and no Re-plan button in the title row', panel.indexOf('data-act="replan"') < 0);
@@ -2396,6 +2396,288 @@ console.log('\nreset mod data');
 	sb2.mod.load(mod.save());
 	eq('a save taken after the wipe loads as defaults', sb2.mod.getSettings().mode, 'tend');
 	eq('with no drawings', sb2.mod.getLayouts().length, 0);
+})();
+
+/* ------------------------------------------------------------------ *
+ * 17. Plant mode
+ *
+ * Any layout in the library can be grown as drawn: Plant this marks it in
+ * the Layouts tab, and the Plant mode tab sows it, replants what expires
+ * and clears what is in the way through the same flow as Breed and Boost.
+ * An immortal golden clover field - everdaisies keeping the weeds off,
+ * golden clover in between - is the case that asked for it.
+ * ------------------------------------------------------------------ */
+console.log('\nplant mode');
+
+// Golden clover around an everdaisy, wheat and thumbcorn on the top row.
+var FIELD = [['everdaisy', 2, 2], ['goldenClover', 1, 2], ['goldenClover', 3, 2], ['goldenClover', 2, 1],
+	['goldenClover', 2, 3], ['bakerWheat', 1, 0], ['bakerWheat', 2, 0], ['thumbcorn', 3, 0]];
+
+/** A bare plot and a stored layout "Field" of `cells`, marked for Plant mode, mode set to Plant. */
+function plantField(seed, unlocked, cells) {
+	var sb = library(seed, unlocked);
+	sb.mod.createLayout('Field');
+	(cells || FIELD).forEach(function (c) { sb.mod.paintTile(c[1], c[2], c[0]); });
+	sb.mod.plantLayout('Field');
+	sb.mod.setMode('plant');
+	return sb;
+}
+
+/** How many of `cells` hold their own species on the plot. */
+function standingOf(sb, cells) {
+	return (cells || FIELD).filter(function (c) { return plotKey(sb, c[1], c[2]) === c[0]; }).length;
+}
+
+(function () {
+	// (1) An empty plot is sown with the layout, through the game's own hook.
+	var all = ['everdaisy', 'goldenClover', 'bakerWheat', 'thumbcorn'];
+	var sb = plantField(170, all);
+	eq('Plant this marks the layout', sb.mod.getSettings().plantLayout, 'Field');
+	sb.step();                                         // the hook's first look only takes note
+	sb.step();
+	eq('Plant mode sows every tile of the layout', standingOf(sb), FIELD.length);
+	var plan = sb.mod.getPlan();
+	ok('the plan is the layout verbatim', !!plan && JSON.stringify(plan.grid) ===
+		JSON.stringify(layoutNamed(sb, 'Field').grid));
+	eq('named after it', plan && plan.layout, 'Field');
+	ok('and keyed as a plant plan', !!plan && /^plant:/.test(plan.key), plan && plan.key);
+
+	// Tiles the layout leaves empty are not sown.
+	var sb2 = plantField(171, all);
+	sb2.mod.runStepNow();
+	var stray = 0;
+	for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) {
+		if (!layoutNamed(sb2, 'Field').grid[y][x] && sb2.M.plot[y][x][0]) stray++;
+	}
+	eq('and nothing else', stray, 0);
+	eq('the status says what was planted', /^planted 8/.test(sb2.mod.getStatus()), true);
+})();
+
+(function () {
+	// (2) A seed not banked yet is skipped, and the status says so.
+	var sb = plantField(172, ['everdaisy', 'bakerWheat', 'thumbcorn']);
+	sb.mod.runStepNow();
+	var clover = FIELD.filter(function (c) { return c[0] === 'goldenClover'; });
+	eq('locked golden clover is not sown', clover.filter(function (c) { return plotKey(sb, c[1], c[2]); }).length, 0);
+	eq('the rest of the layout is', standingOf(sb), FIELD.length - clover.length);
+	ok('and the status names the wait', /4 tiles wait for seeds you have not unlocked/.test(sb.mod.getStatus()),
+		sb.mod.getStatus());
+	sb.unlock(['goldenClover']);
+	sb.mod.runStepNow();
+	eq('once banked, the waiting tiles are sown', standingOf(sb), FIELD.length);
+	ok('and the wait is gone from the status', !/not unlocked/.test(sb.mod.getStatus()), sb.mod.getStatus());
+})();
+
+(function () {
+	// (3) What expires is replanted.
+	var all = ['everdaisy', 'goldenClover', 'bakerWheat', 'thumbcorn'];
+	var sb = plantField(173, all);
+	sb.mod.runStepNow();
+	sb.plant('bakerWheat', 1, 0, 99);                  // about to wither
+	var harvested = sb.mod.getStats().harvested;
+	sb.mod.runStepNow();
+	eq('an expiring plant is harvested', sb.mod.getStats().harvested, harvested + 1);
+	ok('and its tile replanted in the same step', plotKey(sb, 1, 0) === 'bakerWheat' && sb.M.plot[0][1][1] === 0,
+		JSON.stringify(sb.M.plot[0][1]));
+
+	// With the harvest setting off the game kills it; the tile is sown again.
+	sb.mod.getSettings().harvestMature = false;
+	sb.M.plot[0][2] = [0, 0];                          // died of old age
+	sb.mod.runStepNow();
+	eq('a tile left empty by a dead plant is sown again', plotKey(sb, 2, 0), 'bakerWheat');
+})();
+
+(function () {
+	// (4) Immortals are left alone - on the layout and off it.
+	var sb = plantField(174, ['everdaisy', 'goldenClover', 'bakerWheat', 'thumbcorn', 'elderwort']);
+	sb.mod.getSettings().askBeforeClearing = false;
+	sb.mod.getSettings().clearImmediately = true;
+	sb.plant('everdaisy', 2, 2);                       // its own tile, mature
+	sb.plant('elderwort', 5, 5);                       // a tile the layout leaves empty
+	sb.plant('everdaisy', 1, 0, 3);                    // a young one on the wheat tile
+	eq('no immortal is up for removal', sb.mod.getRemovals().length, 0);
+	var aged = sb.M.plot[2][2][1];
+	sb.step();
+	for (var i = 0; i < 6; i++) sb.step();
+	eq('the everdaisy on its tile is untouched', plotKey(sb, 2, 2), 'everdaisy');
+	ok('and was never replanted', sb.M.plot[2][2][1] >= aged, 'age ' + sb.M.plot[2][2][1]);
+	eq('the elderwort off the layout stays', plotKey(sb, 5, 5), 'elderwort');
+	eq('the everdaisy on a wheat tile stays', plotKey(sb, 1, 0), 'everdaisy');
+})();
+
+(function () {
+	// (5) Growth the layout does not want goes through the clearing flow.
+	var all = ['everdaisy', 'goldenClover', 'bakerWheat', 'thumbcorn', 'clover'];
+	var sb = plantField(175, all);
+	sb.plant('clover', 5, 5, 60);                      // off the layout, mature
+	sb.plant('clover', 1, 0, 60);                      // on a wheat tile, mature
+	sb.mod.replan();
+	eq('Plant mode asks first', sb.mod.getClearance(), 'ask');
+	eq('about both clovers', sb.mod.getRemovals().length, 2);
+	sb.mod.runStepNow();
+	ok('nothing is uprooted while the question stands',
+		plotKey(sb, 5, 5) === 'clover' && plotKey(sb, 1, 0) === 'clover');
+	eq('but the free tiles are sown', standingOf(sb), FIELD.length - 1);
+	sb.mod.decide('clear');
+	sb.mod.runStepNow();
+	eq('answered, the clover off the layout is gone', plotKey(sb, 5, 5), '');
+	eq('and the wheat tile holds wheat', plotKey(sb, 1, 0), 'bakerWheat');
+
+	// A sprout waits for maturity unless Clear unwanted growth immediately is on.
+	var sb2 = plantField(176, all);
+	sb2.mod.getSettings().askBeforeClearing = false;
+	sb2.mod.runStepNow();
+	sb2.plant('clover', 5, 5, 1);
+	eq('a young clover is left to grow', sb2.mod.getRemovals().length, 0);
+	sb2.mod.runStepNow();
+	eq('and stays', plotKey(sb2, 5, 5), 'clover');
+	sb2.mod.getSettings().clearImmediately = true;
+	eq('with the setting on it is up for removal', sb2.mod.getRemovals().length, 1);
+	sb2.mod.runStepNow();
+	eq('and cleared straight away with Safety off', plotKey(sb2, 5, 5), '');
+})();
+
+(function () {
+	// (6) Nothing marked: nothing to plant, and the panel says where to look.
+	var sb = library(177, ['bakerWheat', 'clover']);
+	sb.mod.createLayout('Unmarked');
+	sb.mod.paintTile(1, 1, 'bakerWheat');
+	sb.plant('clover', 4, 4, 60);
+	sb.mod.setMode('plant');
+	eq('no layout marked for Plant mode', sb.mod.getSettings().plantLayout, '');
+	eq('the plan is empty', sb.mod.replan(), null);
+	sb.mod.runStepNow();
+	eq('the status points to Layouts', sb.mod.getStatus(), 'no layout active - pick one in Layouts');
+	eq('nothing is sown', plotKey(sb, 1, 1), '');
+	eq('nothing is cleared', plotKey(sb, 4, 4), 'clover');
+	sb.step();
+	sb.step();
+	eq('the panel head says Planting', sb.dom.get('ggAsstHead').textContent, 'Planting');
+	ok('and the plan pane says how to pick one', /Plant this/.test(sb.dom.get('ggRecipe').textContent),
+		sb.dom.get('ggRecipe').textContent);
+
+	// Deleting the marked layout unmarks it.
+	var sb2 = plantField(178, ['bakerWheat']);
+	sb2.mod.runStepNow();
+	ok('a marked layout plans', !!sb2.mod.getPlan());
+	sb2.mod.deleteLayout('Field');
+	eq('deleting it clears the mark', sb2.mod.getSettings().plantLayout, '');
+	eq('and the plan', sb2.mod.getPlan(), null);
+	sb2.mod.runStepNow();
+	eq('with the same status', sb2.mod.getStatus(), 'no layout active - pick one in Layouts');
+})();
+
+(function () {
+	// (7) The mode and the mark survive a save; older saves still load.
+	var sb = plantField(179, ['bakerWheat']);
+	var str = sb.mod.save();
+	var sb2 = library(180, ['bakerWheat']);
+	sb2.mod.load(str);
+	eq('Plant mode survives a save', sb2.mod.getSettings().mode, 'plant');
+	eq('and so does the marked layout', sb2.mod.getSettings().plantLayout, 'Field');
+	sb2.mod.runStepNow();
+	eq('which is planted after the reload', plotKey(sb2, 1, 0), 'bakerWheat');
+
+	var sb3 = library(181);
+	sb3.mod.load(JSON.stringify({v: 2, S: {mode: 'boost', layouts: []}}));
+	eq('a save from before Plant mode loads with nothing marked', sb3.mod.getSettings().plantLayout, '');
+	eq('and keeps its mode', sb3.mod.getSettings().mode, 'boost');
+	var sb4 = library(182);
+	sb4.mod.load(JSON.stringify({v: 2, S: {mode: 'custom'}}));
+	eq('the old Custom mode still loads as Off', sb4.mod.getSettings().mode, 'off');
+	var sb5 = library(183);
+	sb5.mod.load(JSON.stringify({v: 2, S: {mode: 'plant', plantLayout: 7}}));
+	eq('a mark that is not text is ignored', sb5.mod.getSettings().plantLayout, '');
+})();
+
+(function () {
+	// (8) The tab bar, the panel and the Layouts tab in Plant mode.
+	var errors = [];
+	var realError = console.error;
+	console.error = function () { errors.push(Array.prototype.join.call(arguments, ' ')); };
+	var sb;
+	try {
+		sb = plantField(184, ['everdaisy', 'goldenClover', 'bakerWheat', 'thumbcorn']);
+		sb.step();
+		sb.step();
+	} finally {
+		console.error = realError;
+	}
+	eq('Plant mode renders without error', errors.join(' | '), '');
+	var panel = sb.dom.findCreated('grandpasGreenhousePanel').innerHTML;
+	ok('Plant is a mode tab, after Boost', panel.indexOf('id="ggMode-boost"') < panel.indexOf('id="ggMode-plant"') &&
+		panel.indexOf('id="ggMode-plant"') < panel.indexOf('id="ggTab-layouts"'));
+	ok('closing the mode strip', /ggTabEnd/.test(sb.dom.get('ggMode-plant').className) &&
+		!/ggTabEnd/.test(sb.dom.get('ggMode-boost').className));
+	ok('lit while it is the mode', /ggOn/.test(sb.dom.get('ggMode-plant').className));
+	ok('with its hint as hover text', /data-mode="plant" data-tip="[^"]+"/.test(panel));
+	eq('the head names the layout', sb.dom.get('ggAsstHead').textContent, 'Planting "Field"');
+	eq('the choice row folds away', sb.dom.get('ggChoiceRow').style.display, 'none');
+	ok('the preview draws the layout', (sb.dom.get('ggGrid').innerHTML.match(/background:#/g) || []).length === 8);
+
+	sb.mod.setTab('settings');
+	sb.step();
+	ok('the Settings page names Plant mode', /^Working in Plant: /.test(sb.dom.get('ggModeHint').textContent),
+		sb.dom.get('ggModeHint').textContent);
+
+	sb.mod.setTab('layouts');
+	sb.mod.selectLayout('Field');
+	sb.step();
+	ok('the library tags the marked layout', /Field<\/span><span class="ggTag"[^>]*>plant<\/span>/.test(
+		sb.dom.get('ggLibrary').innerHTML), sb.dom.get('ggLibrary').innerHTML);
+	ok('and offers Stop planting on it', sb.dom.get('ggLibActions').innerHTML.indexOf('data-act="stopPlant"') >= 0);
+
+	// The buttons, through the panel's own click handler.
+	sb.mod.createLayout('Other');
+	sb.step();
+	ok('another layout offers Plant this', sb.dom.get('ggLibActions').innerHTML.indexOf('data-act="plantThis"') >= 0);
+	firePanel(sb, 'click', {'data-act': 'plantThis', 'data-i': '1'});
+	eq('which moves the mark', sb.mod.getSettings().plantLayout, 'Other');
+	eq('and leaves the mode alone', sb.mod.getSettings().mode, 'plant');
+	firePanel(sb, 'click', {'data-act': 'stopPlant', 'data-i': '1'});
+	eq('Stop planting clears it', sb.mod.getSettings().plantLayout, '');
+
+	// A default is stored first, like every other change to one.
+	firePanel(sb, 'click', {'data-act': 'libSel', 'data-seed': 'thumbcorn'});
+	ok('a default offers Plant this', sb.dom.get('ggLibActions').innerHTML.indexOf('data-act="plantThis"') >= 0 ||
+		(sb.step(), sb.dom.get('ggLibActions').innerHTML.indexOf('data-act="plantThis"') >= 0));
+	firePanel(sb, 'click', {'data-act': 'plantThis', 'data-seed': 'thumbcorn'});
+	ok('which stores it', !!layoutNamed(sb, 'Breeding Thumbcorn'));
+	eq('and marks it', sb.mod.getSettings().plantLayout, 'Breeding Thumbcorn');
+	sb.mod.renameLayout('Breeding Thumbcorn', 'Corn');
+	eq('the mark follows a rename', sb.mod.getSettings().plantLayout, 'Corn');
+
+	// The recipe link is Breed's business: Plant grows the drawing as it is.
+	sb.mod.useForBreeding('Corn');
+	var lay = layoutNamed(sb, 'Corn'), plan = sb.mod.replan();
+	ok('a layout in use for breeding is planted verbatim', !!plan && !plan.override &&
+		JSON.stringify(plan.grid) === JSON.stringify(lay.grid));
+})();
+
+(function () {
+	// (9) Editing the marked layout re-plans; editing another does not.
+	var sb = plantField(185, ['everdaisy', 'goldenClover', 'bakerWheat', 'thumbcorn']);
+	sb.mod.runStepNow();
+	var key = sb.mod.getPlan().key;
+	sb.mod.createLayout('Elsewhere');
+	sb.mod.paintTile(4, 4, 'bakerWheat');
+	sb.mod.runStepNow();
+	eq('painting another layout keeps the plan key', sb.mod.getPlan().key, key);
+	sb.mod.selectLayout('Field');
+	sb.mod.paintTile(4, 4, 'thumbcorn');
+	var after = sb.mod.getPlan();
+	ok('painting the marked one changes it at once', !!after && after.key !== key, after && after.key);
+	eq('with the new tile in the plan', after && after.grid[4][4], 'thumbcorn');
+	sb.mod.runStepNow();
+	eq('which the next step sows', plotKey(sb, 4, 4), 'thumbcorn');
+
+	// The plot growing moves the key too.
+	var before = sb.mod.getPlan().key;
+	var real = sb.M.isTileUnlocked;
+	sb.M.isTileUnlocked = function (x, y) { return y < 5 && real.call(sb.M, x, y); };
+	sb.mod.runStepNow();
+	ok('a plot of another size re-plans', sb.mod.getPlan().key !== before);
+	sb.M.isTileUnlocked = real;
 })();
 
 /* ------------------------------------------------------------------ */

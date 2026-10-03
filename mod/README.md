@@ -242,18 +242,18 @@ The panel's tab bar is one strip of wooden tabs, drawn from the game's own
 menu art:
 
 ```
-Off | Tend | Breed | Boost      Layouts | Settings
+Off | Tend | Breed | Boost | Plant      Layouts | Settings
 ```
 
-The four mode tabs set what the assistant does, and a mode tab is also the way
+The five mode tabs set what the assistant does, and a mode tab is also the way
 back to the assistant's view - there is no separate Assistant tab. **Layouts**
 and **Settings**, set a little apart, change what the panel shows and leave the
 mode alone; while one of them is open, the current mode keeps a marker so it is
 still plain what the assistant is doing.
 
-There is no mode for planting a drawing of your own. To plant by hand, pick
-Off and the assistant stays out of the way. A save still set to the old Custom
-mode loads as Off.
+To plant by hand, pick Off and the assistant stays out of the way. To have a
+drawing of your own kept planted, mark it with **Plant this** in the Layouts
+tab and pick Plant. A save still set to the old Custom mode loads as Off.
 
 | Mode | What it does |
 |---|---|
@@ -261,6 +261,29 @@ mode loads as Off.
 | **Tend** | Harvests anything new, clears plants about to expire, uproots ripe meddleweed. Your layout is left alone. |
 | **Breed** | Works towards one seed - yours from the seed picker, or its own pick. Lays out the plot and keeps it planted. |
 | **Boost** | Fills the plot with the layout that maximises a bonus you choose. |
+| **Plant** | Grows the layout you marked in the library, exactly as drawn. Sows it, replants what expires, leaves immortals be. |
+
+### Plant grows a layout as drawn
+
+Plant has no planner of its own: the plan is the marked layout, tile for tile.
+An immortal golden clover field - everdaisies keeping weeds and fungus off,
+golden clover in between - is the kind of garden it is for.
+
+- **Only seeds you have unlocked are sown.** A tile drawn with a seed you have
+  not banked yet waits, the status line says how many do, and it is sown once
+  you bank the seed.
+- **Everything else runs as in Breed and Boost**: mature plants are harvested
+  before they expire and their tiles replanted, immortals are never touched,
+  the spending cap holds, and a plant the drawing does not want - on an empty
+  tile or another species' - goes through the same clearing question below.
+- **Edits reach the plot.** Paint the marked layout and the plan follows at
+  once; the next garden step sows the change. Because the plan is keyed by the
+  drawing, a changed drawing asks the clearing question again. A rename does
+  not.
+- **Nothing marked, nothing planted.** The status line says so and points to
+  Layouts. Deleting the marked layout clears the mark.
+- A layout's breeding recipe and **Use for breeding** do not matter here: Plant
+  grows the drawing as it is, linked or not.
 
 ### Boost is optimised against the real effect calculation
 
@@ -284,8 +307,8 @@ guide, a variation of the assistant's own. It is two framed halves, **Library**
 and **Editor**, and it is the one place a layout is changed: the preview in the
 assistant's view is a picture, not an editor. Opening, drawing or exporting a
 layout plants nothing. A layout made for a breeding recipe reaches the plot
-through **Use for breeding**; one drawn from scratch is a sketch to keep, copy
-and export.
+through **Use for breeding**; any layout, drawn from scratch or not, reaches
+it through **Plant this** and the Plant mode.
 
 ### Library
 
@@ -294,9 +317,9 @@ and export.
   banked or not: the assistant's own layout for it on your plot as it is now -
   the same recipe and the same search it uses when it breeds the seed itself.
   Defaults are worked out when you open one and never saved, so they keep up
-  as your plot grows. Paint a tile on one, or press Use for breeding, Rename or
-  Duplicate, and it becomes a layout of your own, which takes the default's
-  place in the list; delete that and the default comes back.
+  as your plot grows. Paint a tile on one, or press Use for breeding, Plant
+  this, Rename or Duplicate, and it becomes a layout of your own, which takes
+  the default's place in the list; delete that and the default comes back.
 - **Your own layouts are never redrawn by the mod** - not by an update, not
   when the plot grows, not by the defaults. **Set to default** on a layout made
   for a recipe replaces its drawing with the assistant's current layout for
@@ -319,6 +342,10 @@ and export.
   whichever was before; a default you paint or rename starts out of use.
   **Stop using** or **Delete** hands the recipe back to the assistant, and a
   stopped layout keeps its badge.
+- **Plant this** marks the one layout Plant mode grows; marking another moves
+  the mark, and **Stop planting** removes it. The marked layout carries a
+  "plant" tag in the list. The mode is left alone - press the Plant tab to
+  start. On a default it stores the layout first, like any other change.
 
 ### Editor
 
@@ -338,7 +365,7 @@ and export.
 ## It asks before it takes anything
 
 Uprooting is the only thing here you can lose work to, so it is the only thing
-that waits for an answer. Switch to Breed or Boost with a garden already
+that waits for an answer. Switch to Breed, Boost or Plant with a garden already
 growing and the panel says so instead of acting:
 
 ```

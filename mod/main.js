@@ -34,7 +34,10 @@ var MODES = [
 	{key:'breed', label:'Breed',
 		hint:'Works towards one seed. Lays out the plot for the best recipe and keeps it planted.'},
 	{key:'boost', label:'Boost',
-		hint:'Fills the plot with the layout that maximises the bonus you pick.'}
+		hint:'Fills the plot with the layout that maximises the bonus you pick.'},
+	{key:'plant', label:'Plant',
+		hint:'Grows the layout you marked with Plant this in Layouts, exactly as drawn. Sows it, ' +
+			 'replants what expires, leaves immortals be.'}
 ];
 
 // M.effs keys, from computeEffs(). buildingCost is a cost, so lower is better.
@@ -52,9 +55,9 @@ function objectiveByKey(key) {
 	return OBJECTIVES[0];
 }
 
-// There is no mode for planting a drawing of your own: a player who wants to
-// plant by hand picks Off and the assistant stays out of the way. Up to 1.3
-// a 'custom' mode did that job; a save still holding it loads as Off.
+// Up to 1.3 a 'custom' mode planted a drawing of your own; a save still
+// holding it loads as Off. Plant does that job now, from the library: the
+// layout it grows is the one marked with Plant this, not a mode of its own.
 function modeByKey(key) {
 	for (var i = 0; i < MODES.length; i++) if (MODES[i].key === key) return MODES[i];
 	return MODES[0];
@@ -67,7 +70,7 @@ function isMode(key) {
 
 /** The modes that keep a layout planted, as opposed to only tending what is there. */
 function layoutMode() {
-	return S.mode === 'breed' || S.mode === 'boost';
+	return S.mode === 'breed' || S.mode === 'boost' || S.mode === 'plant';
 }
 
 /* ------------------------------------------------------------------ *
@@ -87,6 +90,7 @@ var DEFAULTS = {
 	expirySteps:   1,       // steps of the plant's own growth to leave before it withers
 	ripenWeeds:    90,      // let meddleweed reach this age before uprooting it
 	maxSpendPct:   0.15,    // most of your cookies the assistant may spend in one step
+	plantLayout:   '',      // the library layout Plant mode grows, by name; '' for none
 	tab:           'assistant' // which view the panel shows: 'assistant' | 'layouts' | 'settings'
 	// No 'layout' any more: it named the drawing Custom mode planted. Saves
 	// up to 1.3 still carry it; the loader only reads keys listed here, so it
@@ -135,6 +139,7 @@ var lastSoil   = null;
 var lastPanelRefresh = 0;   // when the per-frame panel refresh last ran
 var statusText = 'waiting for the garden';
 var STUCK_MSG  = 'stuck - immortal plants block the weed nursery and nothing you can sow leads anywhere new';
+var NO_PLANT_MSG = 'no layout active - pick one in Layouts';
 var stats      = {harvested:0, planted:0, banked:0, uprooted:0};
 var seedGridKey = '';   // what the seed picker was last drawn for
 // planKey -> 'clear' | 'keep'. Deliberately keyed by plan and deliberately not
@@ -1041,7 +1046,23 @@ function wantedPlanKey(m) {
 		return breedPlanKey(m, d.target, d.recipe);
 	}
 	if (S.mode === 'boost') return 'boost:' + S.objective + ':' + unlockedTiles(m).length;
+	if (S.mode === 'plant') return plantPlanKey(m);
 	return 'none';
+}
+
+/**
+ * Plant mode's key is the drawing itself, tile by tile, and the plot size.
+ * So a stroke in the editor, a Set to default or marking another layout
+ * re-plans on the next look, and the clearance question is asked again for
+ * the new drawing - while a rename, which changes nothing on the plot, does
+ * neither. Whether a seed is unlocked yet stays out: runStep asks that live.
+ */
+function plantPlanKey(m) {
+	var lay = layoutByName(S.plantLayout);
+	if (!lay) return 'plant:none';
+	var rows = [];
+	for (var y = 0; y < 6; y++) rows.push(lay.grid[y].join(','));
+	return 'plant:' + unlockedTiles(m).length + ':' + rows.join('/');
 }
 
 /**
@@ -1100,6 +1121,16 @@ function rebuildPlan(m, force) {
 	} else if (S.mode === 'boost') {
 		plan = planBoost(m, S.objective);
 		if (plan) plan.key = want;
+	} else if (S.mode === 'plant') {
+		// The drawing, verbatim - no climb, no score, no recipe. A layout in
+		// use for breeding is grown as drawn too; the link is Breed's business.
+		var lay = layoutByName(S.plantLayout);
+		if (!lay) {
+			plan = null;
+			statusText = NO_PLANT_MSG;
+			return null;
+		}
+		plan = {grid: sowableCopy(m, lay.grid), score: 0, key: want, label: lay.name, layout: lay.name};
 	} else {
 		plan = null;
 	}
@@ -1132,11 +1163,11 @@ function rescorePlan(m, p) {
  *
  * A customized breed layout reshapes one the assistant chose. A layout can
  * also be drawn on a blank plot with any seed the game lets you sow and kept
- * by name - a shape copied from a guide, a mix to try later. Such a drawing
- * is a sketch, not a plan: nothing plants it directly (up to 1.3 a Custom
- * mode did; a player who wants to plant by hand now picks Off). The one way
- * a library layout reaches the plot is Use for breeding on a layout linked
- * to a recipe.
+ * by name - a shape copied from a guide, a mix to try later. A library
+ * layout reaches the plot in one of two ways: Use for breeding on a layout
+ * linked to a recipe, or Plant this, which marks the one layout Plant mode
+ * grows as drawn - an immortal golden clover field, say. The mark is a
+ * name in S.plantLayout, so it is saved with the mode and follows a rename.
  * ------------------------------------------------------------------ */
 
 // Settings is a view like Layouts: opening it leaves the mode alone, and it
@@ -1252,6 +1283,8 @@ function renameLayout(m, from, to) {
 	lay.name = name;
 	if (libSel === from) libSel = name;
 	if (plan && plan.override === from) plan.override = name;
+	if (S.plantLayout === from) S.plantLayout = name;
+	if (plan && plan.layout === from) plan.layout = plan.label = name;
 	return name;
 }
 
@@ -1272,13 +1305,15 @@ function duplicateLayout(name) {
 
 /**
  * Deleting a layout that stands in for a breed plan needs no fallback: the
- * assistant's own layout is right there, and the rebuild plants it.
+ * assistant's own layout is right there, and the rebuild plants it. Deleting
+ * the one Plant mode grows leaves it nothing to grow until another is marked.
  */
 function deleteLayout(m, name) {
 	var i = layoutIndex(name);
 	if (i < 0) return false;
 	S.layouts.splice(i, 1);
-	if (plan && plan.override === name) { plan = null; if (m) rebuildPlan(m, true); }
+	if (S.plantLayout === name) S.plantLayout = '';
+	if (plan && (plan.override === name || plan.layout === name)) { plan = null; if (m) rebuildPlan(m, true); }
 	if (libSel === name) libSel = (S.layouts[i] || S.layouts[i - 1] || {name: ''}).name;
 	return true;
 }
@@ -1332,6 +1367,9 @@ function paintTile(m, x, y, key) {
 		plan.grid[y][x] = key;
 		rescorePlan(m, plan);
 	}
+	// The layout Plant mode grows is keyed by its drawing, so the stroke has
+	// already moved the key; re-planning now puts it in the preview at once.
+	if (S.mode === 'plant' && S.plantLayout === lay.name) rebuildPlan(m, false);
 	return true;
 }
 
@@ -1532,6 +1570,34 @@ function stopUsing(m, name) {
 }
 
 /**
+ * Plant this: marks the one layout Plant mode grows, taking the mark from
+ * whichever had it. The mode is left alone, as Use for breeding leaves it -
+ * the Plant tab is where planting starts. A default is stored first, like
+ * every other change to one, so the mark names a layout that lasts.
+ */
+function plantThis(m, name) {
+	var lay = layoutByName(name);
+	if (!lay && m) {
+		var defs = breedDefaults(m);
+		for (var i = 0; i < defs.length && !lay; i++) {
+			if (defs[i].name === name) lay = materializeDefault(m, defs[i].seed);
+		}
+	}
+	if (!lay) return false;
+	S.plantLayout = lay.name;
+	if (m && S.mode === 'plant') rebuildPlan(m, false);
+	return true;
+}
+
+/** Stop planting: Plant mode has nothing to grow until another layout is marked. */
+function stopPlanting(m, name) {
+	if (!S.plantLayout || S.plantLayout !== name) return false;
+	S.plantLayout = '';
+	if (m && S.mode === 'plant') rebuildPlan(m, false);
+	return true;
+}
+
+/**
  * Opens a seed's breeding layout in the editor as a stored layout. A layout
  * already made for the plan is reopened; otherwise the assistant's own
  * layout for it - the same recipe, the same climb, the same key it would use
@@ -1662,7 +1728,7 @@ function resetToDefault(m, name) {
 	if (!rec) return false;
 	lay.grid = cloneGrid(defaultGrid(m, breedPlanKey(m, rec.target, rec), rec));
 	// The drawing on the plot is this one, so the live plan must follow.
-	if (plan && plan.override === lay.name) {
+	if (plan && (plan.override === lay.name || plan.layout === lay.name)) {
 		plan = null;
 		rebuildPlan(m, true);
 	}
@@ -1828,17 +1894,21 @@ function runStep(m) {
 		// A stuck plot still gets the full pass above - new species are still
 		// banked and ripe weeds still pulled - only planting has nothing to do.
 		if (plan && plan.stuck) statusText = STUCK_MSG;
+		else if (S.mode === 'plant' && !grid) statusText = NO_PLANT_MSG;
 		else statusText = (S.mode === 'tend') ? 'tending' : 'no layout - nothing planted';
 		return;
 	}
 
-	var budget = Game.cookies * S.maxSpendPct, spent = 0, planted = 0, short = 0;
+	var budget = Game.cookies * S.maxSpendPct, spent = 0, planted = 0, short = 0, locked = 0;
 	for (t = 0; t < tiles.length; t++) {
 		x = tiles[t][0]; y = tiles[t][1];
 		if (m.plot[y][x][0] > 0) continue;
 		var key = grid[y][x];
 		if (!key) continue;
 		var want = m.plants[key];
+		// A drawn layout may name a seed ahead of the collection; its tile
+		// waits, and the status says so, until the seed is banked.
+		if (want && want.plantable && !want.unlocked) { locked++; continue; }
 		if (!want || !want.unlocked || !want.plantable) continue;
 		var cost = plantAt(m, want, x, y, budget - spent);
 		if (cost > 0 || m.getCost(want) === 0) { spent += cost; planted++; }
@@ -1846,6 +1916,10 @@ function runStep(m) {
 	}
 	statusText = planted ? ('planted ' + planted + (spent ? ' for ' + fmtCookies(spent) + ' cookies' : ''))
 		: (short ? 'waiting for cookies to fill ' + short + ' tiles' : 'layout is planted');
+	if (locked) {
+		statusText += ' - ' + locked + (locked === 1 ? ' tile waits for a seed' : ' tiles wait for seeds') +
+			' you have not unlocked';
+	}
 }
 
 /* ------------------------------------------------------------------ *
@@ -1956,7 +2030,7 @@ return [
 	'#' + PANEL_ID + ' .ggPane .ggAlert{margin:0;}',
 	'#' + PANEL_ID + ' .ggAlertText{color:#ffd75e;font-size:13px;}',
 
-	// One tab bar: the four modes, then Layouts and Settings. A mode tab is both "show the
+	// One tab bar: the five modes, then Layouts and Settings. A mode tab is both "show the
 	// assistant" and "work this way", so a separate Assistant tab above them
 	// only added a click.
 	// No gap between the modes: the strip is one connected bar of planks, the
@@ -1978,7 +2052,7 @@ return [
 	// Tabs after the first pull 1px left, so their 1px fallback borders
 	// overlap into one shared line, and position:relative lets the open tab
 	// stack above its neighbours to show its own edges.
-	// Sized for six in a row: narrow planks and the smaller type, with the
+	// Sized for seven in a row: narrow planks and the smaller type, with the
 	// crop 2px down the plank to keep the grain centred on the short tab.
 	'#' + PANEL_ID + ' .ggBtn.ggTab{box-sizing:border-box;width:64px;text-align:center;margin:0 0 0 -1px;',
 	'position:relative;padding:3px 0 2px 0;font-size:12px;line-height:100%;',
@@ -2025,14 +2099,14 @@ return [
 	'#' + PANEL_ID + ' .ggBtn.ggTab:has(+ .ggOn){border-image-width:3px 0 0 0;}',
 	'#' + PANEL_ID + ' .ggBtn.ggTab:first-child:has(+ .ggOn){border-image-width:3px 0 0 3px;}',
 	// Layouts and Settings stand a few pixels apart at the end of the bar: the
-	// four modes change what the assistant does, these two only what the panel
+	// five modes change what the assistant does, these two only what the panel
 	// shows. So the gap closes the mode run with its own corner and edge
-	// (Boost, the last mode) and opens Layouts with one, as if each were a
+	// (Plant, the last mode) and opens Layouts with one, as if each were a
 	// strip's end.
 	// Plain classes rather than :has(), so the gap looks right everywhere.
-	// Boost keeps its right edge even while Layouts is lit - there is no
+	// Plant keeps its right edge even while Layouts is lit - there is no
 	// shared divider across the gap to hand over - hence the :not(.ggOn)
-	// rule after the :has ones, and .ggOn's own full frame when Boost is lit.
+	// rule after the :has ones, and .ggOn's own full frame when Plant is lit.
 	'#' + PANEL_ID + ' .ggBtn.ggTab.ggTabEnd{border-top-right-radius:3px;}',
 	'#' + PANEL_ID + ' .ggBtn.ggTab.ggTabEnd:not(.ggOn){border-image-width:3px 3px 0 0;}',
 	'#' + PANEL_ID + ' .ggBtn.ggTab.ggTabApart{margin-left:6px;border-top-left-radius:3px;',
@@ -2223,8 +2297,8 @@ var HELP = {
 	setClearNow:'Uproot a plant the layout does not want as soon as it sprouts, instead of letting it mature first. Without this, a banked fungus that spreads into a mutation slot holds it until it matures - and seeds its neighbours meanwhile. Only species you have banked: a new one is still left to ripen, and the layout\'s own plants, immortals and weeds are never touched.',
 	setWeeds: 'Uproot meddleweed the layout has no use for - but only once it has ripened, because the fungus spore it drops when pulled scales with its age.',
 	setAsk:   'Ask before uprooting anything that would otherwise keep growing. Turn it off and the assistant clears straight through.',
-	tabLayouts:'Draw your own layouts with any seed and keep as many as you like. A layout made for a breeding recipe can be used for breeding in place of the assistant\'s.',
-	library:  'Your own layouts first, then the assistant\'s breeding layout for every seed. Click a name to open it in the editor. A layout made for a recipe can be put to use for breeding; one drawn from scratch is a sketch to keep - to plant by hand, switch to Off.',
+	tabLayouts:'Draw your own layouts with any seed and keep as many as you like. A layout made for a breeding recipe can be used for breeding in place of the assistant\'s, and any layout can be grown as drawn in Plant mode.',
+	library:  'Your own layouts first, then the assistant\'s breeding layout for every seed. Click a name to open it in the editor. A layout made for a recipe can be put to use for breeding; any layout can be marked with Plant this for Plant mode to grow.',
 	editor:   'Pick a seed in the Brush beside the grid, then click tiles to paint them. Every click is kept at once - there is nothing to save. Blank squares are tiles your farm level has not unlocked yet.',
 	palette:  'The seed a click paints. Greyed seeds are not unlocked yet: you can draw them, and they are planted once you bank the seed.',
 	libNew:   'Start a new layout on a blank plot.',
@@ -2237,6 +2311,8 @@ var HELP = {
 	customize:'Copy this layout into your library, linked to this recipe. Reshape it in the editor, and from then on the assistant plants your version whenever it breeds this seed with these parents on a plot this size.',
 	stopUse:  'Stop using this layout for its recipe. It stays in your library, still marked with the seed it was made for, and the assistant goes back to its own.',
 	useBreed: 'Have the assistant plant this layout in place of its own whenever it breeds this seed with this recipe on a plot this size. Any other layout in use for the same recipe is taken out of use.',
+	plantThis:'Make this the layout Plant mode grows, exactly as drawn: empty tiles are sown, expired plants replanted, immortals left be. One layout at a time - this takes the mark from any other. Switch to the Plant tab to start.',
+	stopPlant:'Stop growing this layout in Plant mode. It stays in your library; Plant mode has nothing to grow until you mark another.',
 	badge:    'The seed this layout was made for - breeding it with this recipe on a plot of this size. Green while it is in use and stands in for the assistant\'s own layout.',
 	libDefault:'The assistant\'s layout for breeding this seed on your plot as it is now. It is worked out when you open it and never saved, so it keeps up as your plot grows. Paint a tile or press any button and it becomes a layout of your own, which then takes its place here; delete that and this default comes back.',
 	libReset: 'Replace this layout\'s drawing with the assistant\'s layout for its recipe on your plot as it is now. Asks first. The name, and whether it is used for breeding, stay as they are.'
@@ -2431,9 +2507,10 @@ function esc(s) {
  * the mode's own line, the clearance question) sits beside the plot side
  * (the preview, its colour key and how the garden is doing) rather than
  * above it, because the bottom bar is short and wide and stacking them would
- * push the status off its bottom. The modes without a choice (Off, Tend)
- * hide the choice rows and leave one line of text, so the frame is the same
- * in all four and only its contents change.
+ * push the status off its bottom. The modes without a choice (Off, Tend,
+ * Plant - whose layout is picked in Layouts) hide the choice rows and leave
+ * one line of text, so the frame is the same in all five and only its
+ * contents change.
  *
  * The preview is a picture, not an editor: breed layouts are reshaped in the
  * Layouts tab, so there is one place a layout changes and one answer to what
@@ -2442,8 +2519,9 @@ function esc(s) {
 function assistantTabHTML() {
 	return '<div class="ggPane ggAsstPane">' +
 			// Named after what the mode is doing, not the abstract "Plan":
-			// refreshPanel fills it (Breeding <seed> / Boosting / Tending / Off),
-			// so it starts empty rather than with a label no mode uses.
+			// refreshPanel fills it (Breeding <seed> / Boosting / Planting
+			// <layout> / Tending / Off), so it starts empty rather than with a
+			// label no mode uses.
 			'<div class="ggHead" id="ggAsstHead"' + tip('plan') + '></div>' +
 			'<div class="ggRow ggBody">' +
 				'<div class="ggCol ggPlanCol">' +
@@ -2546,7 +2624,9 @@ function dialogHTML() {
 	} else if (d.kind === 'delete') {
 		body = '<span class="ggAlertText">Delete &quot;' + esc(d.name) + '&quot;? This cannot be undone.' +
 			(plan && plan.override === d.name
-				? ' It stands in for the breed layout, so the assistant goes back to its own.' : '') + '</span>' +
+				? ' It stands in for the breed layout, so the assistant goes back to its own.' : '') +
+			(S.plantLayout === d.name ? ' It is the layout Plant mode grows, so Plant mode has nothing to grow ' +
+				'until you mark another.' : '') + '</span>' +
 			'<div class="ggRow" style="margin:0;">' + ok('Delete') + cancel + '</div>';
 	} else if (d.kind === 'reset') {
 		body = '<span class="ggAlertText">Set &quot;' + esc(d.name) + '&quot; back to the assistant\'s layout for ' +
@@ -2695,7 +2775,8 @@ function onPanelClick(e) {
 		if (m) rebuildPlan(m, true);
 	} else if (act === 'tab') {
 		setTab(el.getAttribute('data-tab'));
-	} else if (act === 'libSel' || act === 'useBreed' || act === 'stopUse') {
+	} else if (act === 'libSel' || act === 'useBreed' || act === 'stopUse' || act === 'plantThis' ||
+			act === 'stopPlant') {
 		// A default's row and buttons name it by seed. Selecting one only opens
 		// it; anything else is a change to it, so it is stored first.
 		var seed = el.getAttribute('data-seed'), lay = null;
@@ -2708,6 +2789,8 @@ function onPanelClick(e) {
 		if (lay && act === 'libSel') selectLayout(m, lay.name);
 		if (lay && act === 'useBreed') useForBreeding(m, lay.name);
 		if (lay && act === 'stopUse') stopUsing(m, lay.name);
+		if (lay && act === 'plantThis') plantThis(m, lay.name);
+		if (lay && act === 'stopPlant') stopPlanting(m, lay.name);
 	} else if (act === 'customize') {
 		if (m) customizeCurrentPlan(m);
 	} else if (act === 'brush') {
@@ -2886,6 +2969,7 @@ function refreshPanel() {
 		var ht = (plan && plan.target && m.plants[plan.target]) ? m.plants[plan.target].name : '';
 		headText = ht ? 'Breeding ' + ht : 'Breeding';
 	} else if (S.mode === 'boost') headText = 'Boosting';
+	else if (S.mode === 'plant') headText = (plan && plan.layout) ? 'Planting "' + plan.layout + '"' : 'Planting';
 	else if (S.mode === 'tend') headText = 'Tending';
 	setText('ggAsstHead', headText);
 
@@ -2946,7 +3030,14 @@ function refreshPanel() {
 	} else {
 		choiceRow.style.display = 'none';
 		seedRow.style.display = 'none';
-		setText('ggRecipe', modeByKey(S.mode).hint);
+		// Plant has no choice of its own - the layout is picked in Layouts -
+		// so its line says which one, or where to pick one.
+		if (S.mode === 'plant') {
+			setText('ggRecipe', (plan && plan.layout)
+				? 'Growing your layout "' + plan.layout + '" exactly as drawn. Change it, or mark another, ' +
+					'in the Layouts tab.'
+				: 'No layout is marked for planting. Open Layouts, pick one and press Plant this.');
+		} else setText('ggRecipe', modeByKey(S.mode).hint);
 	}
 
 	// --- the clearance question -----------------------------------------
@@ -2985,11 +3076,13 @@ function refreshPanel() {
 				if (!m.isTileUnlocked(x, y)) { html += '<div class="ggCell ggLocked"></div>'; continue; }
 				var key = grid[y][x];
 				if (!key) {
-					html += '<div class="ggCell ggHole"' + tipText('left empty for mutations') + '></div>';
+					html += '<div class="ggCell ggHole"' +
+						tipText(S.mode === 'plant' ? 'kept empty' : 'left empty for mutations') + '></div>';
 					continue;
 				}
 				html += '<div class="ggCell" style="background:' + cols.map[key] +
-					';border-color:' + cols.map[key] + ';"' + tipText(m.plants[key].name) + '></div>';
+					';border-color:' + cols.map[key] + ';"' + tipText(m.plants[key].name +
+					(m.plants[key].unlocked ? '' : ' (not unlocked yet - waits until you bank it)')) + '></div>';
 			}
 		}
 		for (var i = 0; i < cols.order.length; i++) {
@@ -3104,6 +3197,11 @@ function refreshLayouts(m, tiles) {
 			(linked ? '<span class="ggStat' + (inUse ? ' ggGood' : '') + '"' + tip('badge') + '>[' +
 				esc(recipeBadge(m, l.recipe)) + ']</span>' : '') +
 			(active ? '<span class="ggTag"' + tipText('The assistant is breeding with this layout right now') + '>planted</span>' : '') +
+			// The layout marked for Plant mode carries its own tag, in every
+			// mode, so the mark is visible before the Plant tab is pressed.
+			(S.plantLayout === l.name ? '<span class="ggTag"' + tipText(S.mode === 'plant'
+				? 'Plant mode is growing this layout right now'
+				: 'The layout Plant mode grows - switch to the Plant tab to start') + '>plant</span>' : '') +
 			'</div>';
 	}
 	// Then the defaults. A row needs only the name and the seed, so the list
@@ -3121,21 +3219,28 @@ function refreshLayouts(m, tiles) {
 
 	var acts = '';
 	if (selDef) {
-		// A default can be used, renamed or copied - each stores it first -
-		// but not deleted: there is nothing stored to delete.
+		// A default can be used, planted, renamed or copied - each stores it
+		// first - but not deleted: there is nothing stored to delete.
 		acts = '<div class="ggBtn ggSmall" data-act="useBreed" data-seed="' + selDef.seed + '"' + tip('useBreed') +
 				'>Use for breeding</div>' +
+			'<div class="ggBtn ggSmall" data-act="plantThis" data-seed="' + selDef.seed + '"' + tip('plantThis') +
+				'>Plant this</div>' +
 			'<div class="ggBtn ggSmall" data-act="libRename"' + tip('libRename') + '>Rename</div>' +
 			'<div class="ggBtn ggSmall" data-act="libDup"' + tip('libDup') + '>Duplicate</div>';
 	} else if (sel) {
 		var si = S.layouts.indexOf(sel);
 		var selLinked = typeof sel.recipe === 'string', selInUse = selLinked && sel.use === true;
-		// Only a layout made for a recipe can reach the plot, through Use for
-		// breeding; one drawn from scratch is kept, copied and exported only.
+		// Only a layout made for a recipe can be used for breeding; any layout
+		// can be marked for Plant mode, which grows it as drawn.
 		acts = (selLinked ? (selInUse
 				? '<div class="ggBtn ggSmall ggOn" data-act="stopUse" data-i="' + si + '"' + tip('stopUse') + '>Stop using</div>'
 				: '<div class="ggBtn ggSmall" data-act="useBreed" data-i="' + si + '"' + tip('useBreed') +
 					'>Use for breeding</div>') : '') +
+			(S.plantLayout === sel.name
+				? '<div class="ggBtn ggSmall ggOn" data-act="stopPlant" data-i="' + si + '"' + tip('stopPlant') +
+					'>Stop planting</div>'
+				: '<div class="ggBtn ggSmall" data-act="plantThis" data-i="' + si + '"' + tip('plantThis') +
+					'>Plant this</div>') +
 			'<div class="ggBtn ggSmall" data-act="libRename"' + tip('libRename') + '>Rename</div>' +
 			'<div class="ggBtn ggSmall" data-act="libDup"' + tip('libDup') + '>Duplicate</div>' +
 			(canReset(m, sel) ? '<div class="ggBtn ggSmall" data-act="libReset"' + tip('libReset') +
@@ -3172,8 +3277,10 @@ function refreshLayouts(m, tiles) {
 				'press a button to keep your own copy.'
 			: 'Editing "' + lay.name + '"' +
 			(bred && bred.override === lay.name ? ' - breeding with it now, every click goes straight to the plot' :
+				(S.mode === 'plant' && S.plantLayout === lay.name
+					? ' - Plant mode is growing it, every click reaches the plot on the next step' :
 				(typeof lay.recipe === 'string' && !lay.use
-					? ' - for ' + recipeBadge(m, lay.recipe) + ', not in use for breeding' : '')));
+					? ' - for ' + recipeBadge(m, lay.recipe) + ', not in use for breeding' : ''))));
 		var cols = speciesColors(grid, tiles);
 		for (var y = 0; y < 6; y++) {
 			for (var x = 0; x < 6; x++) {
@@ -3429,6 +3536,8 @@ Game.registerMod(MOD_ID, {
 	customizeCurrentPlan: function () { return customizeCurrentPlan(garden()); },
 	useForBreeding: function (name) { return useForBreeding(garden(), name); },
 	stopUsing:   function (name) { return stopUsing(garden(), name); },
+	plantLayout: function (name) { return plantThis(garden(), name); },
+	stopPlanting:function (name) { return stopPlanting(garden(), name); },
 	loadBreedLayout: function (key) { return loadBreedLayout(garden(), key); }
 });
 
