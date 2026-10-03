@@ -360,14 +360,20 @@ Three things about it are deliberate:
 - **Nothing that was never at risk appears in the question**: weeds, immortals,
   species you have not banked yet, and anything already inside the expiry margin
   - that last one was going to die this cycle anyway, so taking it is strictly
-  better than letting it rot, and not worth a prompt.
+  better than letting it rot, and not worth a prompt. (With "Harvest mature
+  plants" off nothing else would take it, so then it is asked about too.)
+- **A plant that has not matured yet is left to grow** - unless "Clear unwanted
+  growth immediately" is on. Then a banked plant the layout does not want is
+  part of the question (or, with Safety off, uprooted) as soon as it sprouts,
+  so a banked fungus spreading into a mutation slot cannot hold it until it
+  matures and seeds its neighbours.
 
 The list the panel asks about is produced by the same function that does the
 uprooting, so the question and the action cannot drift apart.
 
 ## Settings
 
-The **Settings** tab is a page of its own: five slide switches filed under
+The **Settings** tab is a page of its own: six slide switches filed under
 four groups - Harvesting, Planting, Weeds and Safety - each with its help text
 written out underneath, and a line naming the mode they are acting on right
 now.
@@ -377,6 +383,7 @@ now.
 | Harvest new species on sight | on | Banks a seed the moment it matures. This is what unlocks things. |
 | Harvest mature plants before they expire | on | Clears a tile before the plant rots. |
 | Keep the layout planted | on | Replants the plan as tiles free up. |
+| Clear unwanted growth immediately | off | Takes a banked plant the layout does not want as soon as it sprouts, not once it matures. Unbanked species, the layout's own plants, immortals and weeds are never touched. |
 | Uproot ripe meddleweed the layout does not want | on | Weeds the plan needs are kept, and none are pulled before they ripen. |
 | Ask before uprooting plants that stand in the way of the layout | on | The confirmation above. Turn it off and the assistant clears straight through, the way it used to. |
 

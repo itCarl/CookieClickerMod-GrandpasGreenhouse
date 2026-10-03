@@ -550,6 +550,136 @@ function cloverLeft(sb) {
 })();
 
 (function () {
+	// With "Harvest mature plants" off nothing else takes an expiring plant the
+	// layout does not want, so it must not be left out of the clearing too -
+	// it would stand in the way until it rots.
+	var sb = fresh({seed: 32, level: 9, cookies: 1e30, cookiesPs: 1});
+	sb.unlock(QUEENBEET_PARENTS.concat(['clover']));
+	sb.clear();
+	sb.plant('clover', 1, 1, 98);
+	sb.mod.setMode('breed');
+	sb.mod.setTarget('queenbeet');
+	sb.mod.getSettings().harvestMature = false;
+	sb.mod.getSettings().askBeforeClearing = false;
+	sb.mod.replan();
+	eq('with harvest-mature off an expiring plant is up for removal', sb.mod.getRemovals().length, 1);
+	sb.mod.runStepNow();
+	eq('and it is cleared', cloverLeft(sb), 0);
+})();
+
+/* ------------------------------------------------------------------ *
+ * 5d. Clearing unwanted growth immediately
+ *
+ * A banked fungus that spreads into a mutation slot is only taken once it
+ * matures - by which time it has seeded its neighbours. The setting takes
+ * it as soon as it appears; locked species and the layout's own plants
+ * are never part of that.
+ * ------------------------------------------------------------------ */
+console.log('\nclear unwanted growth immediately');
+
+/** A planted queenbeet layout, Safety off, with a mildew sprout in a slot. */
+function sproutInSlot(unlockMildew, now) {
+	var sb = fresh({seed: 101, level: 9, cookies: 1e30, cookiesPs: 1});
+	sb.unlock(QUEENBEET_PARENTS.concat(unlockMildew ? ['whiteMildew'] : []));
+	sb.clear();
+	sb.mod.setMode('breed');
+	sb.mod.setTarget('queenbeet');
+	sb.mod.getSettings().askBeforeClearing = false;
+	if (now !== undefined) sb.mod.getSettings().clearImmediately = now;
+	sb.mod.replan();
+	sb.mod.runStepNow();                                // plant the layout
+	sb.step();                                          // the hook's first look only takes note
+	var grid = sb.mod.getPlan().grid, slot = null;
+	for (var y = 0; y < 6 && !slot; y++) for (var x = 0; x < 6 && !slot; x++) {
+		if (sb.M.isTileUnlocked(x, y) && !grid[y][x]) slot = [x, y];
+	}
+	sb.M.plot[slot[1]][slot[0]] = [sb.M.plants.whiteMildew.id + 1, 0];
+	sb.slot = slot;
+	return sb;
+}
+
+function mildewInSlot(sb) {
+	return sb.M.plot[sb.slot[1]][sb.slot[0]][0] === sb.M.plants.whiteMildew.id + 1;
+}
+
+function listed(sb, x, y) {
+	return sb.mod.getRemovals().some(function (r) { return r.x === x && r.y === y; });
+}
+
+(function () {
+	var sb = sproutInSlot(true);
+	eq('the setting is off by default', sb.mod.getSettings().clearImmediately, false);
+	ok('so a banked sprout is not up for removal', !listed(sb, sb.slot[0], sb.slot[1]));
+	sb.step();
+	ok('and it is left to grow', mildewInSlot(sb));
+	var M = sb.M, mature = M.plants.whiteMildew.mature, held = 0, before = 0;
+	for (var i = 0; i < 20 && mildewInSlot(sb); i++) {
+		before = M.plot[sb.slot[1]][sb.slot[0]][1];
+		sb.step();
+		if (mildewInSlot(sb)) held++;
+	}
+	ok('it holds the slot for ' + (held + 1) + ' steps, until it matures',
+		!mildewInSlot(sb) && held > 0 && before < mature, 'last age ' + before + ', mature ' + mature);
+})();
+
+(function () {
+	var sb = sproutInSlot(true, true);
+	ok('with the setting on a banked sprout in a slot is up for removal', listed(sb, sb.slot[0], sb.slot[1]));
+	sb.step();
+	ok('and it is gone after one step', !mildewInSlot(sb));
+})();
+
+(function () {
+	// Safety still has the last word: with it on, the sprout is part of the
+	// question and stays until the player answers.
+	var sb = sproutInSlot(true, true);
+	sb.mod.getSettings().askBeforeClearing = true;
+	eq('with Safety on it is asked about', sb.mod.getClearance(), 'ask');
+	sb.step();
+	ok('and stays until answered', mildewInSlot(sb));
+	sb.mod.decide('clear');
+	sb.step();
+	ok('and is cleared once answered', !mildewInSlot(sb));
+})();
+
+(function () {
+	var sb = sproutInSlot(false, true);
+	ok('a species not banked yet is never up for removal', !listed(sb, sb.slot[0], sb.slot[1]));
+	sb.step();
+	ok('and is left to ripen', mildewInSlot(sb));
+})();
+
+(function () {
+	// The layout's own seedlings are exactly what it wants - never cleared.
+	var sb = sproutInSlot(true, true);
+	var grid = sb.mod.getPlan().grid, M = sb.M, wanted = 0, onPlan = 0, standing = 0;
+	sb.step();
+	for (var y = 0; y < 6; y++) for (var x = 0; x < 6; x++) {
+		if (!grid[y][x]) continue;
+		wanted++;
+		if (listed(sb, x, y)) onPlan++;
+		var t = M.plot[y][x];
+		if (t[0] && M.plantsById[t[0] - 1].key === grid[y][x]) standing++;
+	}
+	ok('the layout has tiles of its own (' + wanted + ')', wanted > 0);
+	eq('none of them is up for removal', onPlan, 0);
+	eq('and every one still holds its seedling', standing, wanted);
+})();
+
+(function () {
+	// Immortals stay out of it, however young.
+	var sb = fresh({seed: 33, level: 9, cookies: 1e30, cookiesPs: 1});
+	sb.unlock(QUEENBEET_PARENTS.concat(['elderwort']));
+	sb.clear();
+	sb.plant('elderwort', 1, 1, 2);
+	sb.mod.setMode('breed');
+	sb.mod.setTarget('queenbeet');
+	sb.mod.getSettings().clearImmediately = true;
+	sb.mod.replan();
+	eq('an immortal sprout is not up for removal', sb.mod.getRemovals().length, 0);
+})();
+
+(function () {
 	// The banner has to actually reach the panel.
 	var sb = inTheWay({seed: 34, level: 9, cookies: 1e30, cookiesPs: 1});
 	sb.step();
@@ -761,7 +891,7 @@ console.log('\nthe panel');
 	sb.step();
 	var panelEl = sb.dom.findCreated('grandpasGreenhousePanel');
 	var panel = panelEl.innerHTML;
-	['bankNew', 'harvestMature', 'keepPlan', 'pullWeeds', 'askBeforeClearing'].forEach(function (k) {
+	['bankNew', 'harvestMature', 'keepPlan', 'clearImmediately', 'pullWeeds', 'askBeforeClearing'].forEach(function (k) {
 		var re = new RegExp('<div class="ggSetItem" data-help="([^"]+)"><div class="ggSet"><input[^>]*id="ggSet-' + k + '"');
 		var hit = re.exec(panel);
 		ok('the ' + k + ' setting has hover text', !!hit);
@@ -858,6 +988,19 @@ console.log('\npersistence');
 	try { sb3.mod.load('not json at all'); } catch (e) { threw = true; }
 	ok('a corrupt save does not throw', !threw);
 	eq('and the defaults are kept', sb3.mod.getSettings().mode, 'tend');
+})();
+
+(function () {
+	// Saves from before "Clear unwanted growth immediately" do not carry it,
+	// and must load with the old wait-for-maturity behaviour.
+	var sb = fresh();
+	sb.mod.load(JSON.stringify({v: 2, S: {mode: 'breed', askBeforeClearing: false}}));
+	eq('an old save loads with clear-immediately off', sb.mod.getSettings().clearImmediately, false);
+	eq('next to the settings it does carry', sb.mod.getSettings().askBeforeClearing, false);
+	sb.mod.getSettings().clearImmediately = true;
+	var sb2 = fresh();
+	sb2.mod.load(sb.mod.save());
+	eq('and once switched on, it survives a save', sb2.mod.getSettings().clearImmediately, true);
 })();
 
 /* ------------------------------------------------------------------ *

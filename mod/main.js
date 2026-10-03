@@ -81,6 +81,7 @@ var DEFAULTS = {
 	bankNew:       true,    // harvest a species you have not banked, the moment it matures
 	harvestMature: true,    // harvest a mature plant before it dies of old age
 	keepPlan:      true,    // replant the layout as tiles free up
+	clearImmediately: false,// clear unwanted banked growth as it sprouts, not once it matures
 	pullWeeds:     true,    // uproot meddleweed the plan does not want
 	askBeforeClearing: true,// ask before uprooting a plant the layout does not want
 	expirySteps:   1,       // steps of the plant's own growth to leave before it withers
@@ -101,6 +102,8 @@ var SETTINGS_META = [
 	{key:'harvestMature', label:'Harvest mature plants before they expire', help:'setMature',
 		group:'Harvesting'},
 	{key:'keepPlan',      label:'Keep the layout planted', help:'setPlan', group:'Planting'},
+	{key:'clearImmediately', label:'Clear unwanted growth immediately', help:'setClearNow',
+		group:'Planting'},
 	{key:'pullWeeds',     label:'Uproot ripe meddleweed the layout does not want', help:'setWeeds',
 		group:'Weeds'},
 	{key:'askBeforeClearing', label:'Ask before uprooting plants that stand in the way of the layout',
@@ -1706,11 +1709,20 @@ function plantAt(m, p, x, y, budget) {
  * anything. The panel asks about exactly this list and runStep acts on exactly
  * this list, so the question and the action cannot drift apart.
  *
- * Deliberately excluded, because none of them is a loss the player would
- * regret: weeds (worthless, and governed by their own setting), immortals
- * (never uprooted at all), species not yet banked (left to ripen), and
- * anything already within the expiry margin - that one was going to die this
- * cycle anyway, so harvesting it is strictly better than letting it rot.
+ * Never listed: weeds (worthless, and governed by their own setting),
+ * immortals (never uprooted at all), species not yet banked (left to ripen -
+ * that also covers the breed target, which is unbanked by definition), and
+ * the layout's own plants on their own tiles.
+ *
+ * A plant that has not matured is listed only on the nursery plot, or when
+ * clearImmediately is on: by default it is left to grow until it matures, and
+ * with the setting it is taken as soon as it sprouts, before a spreading
+ * fungus can seed its neighbours.
+ *
+ * A mature plant already within the expiry margin is left to harvestMature,
+ * which takes it this step without asking - it was going to die this cycle
+ * anyway. With that setting off nothing else would take it, so it is listed
+ * like any other.
  */
 function removalsFor(m) {
 	var out = [];
@@ -1725,8 +1737,8 @@ function removalsFor(m) {
 		if (grid[y][x] === p.key) continue;
 
 		var age = tile[1], mature = age >= p.mature;
-		if (!mature && !nursery) continue;
-		if (mature && age >= harvestAgeOf(p)) continue;
+		if (!mature && !nursery && !S.clearImmediately) continue;
+		if (mature && age >= harvestAgeOf(p) && S.harvestMature) continue;
 		out.push({x: x, y: y, key: p.key, name: p.name, mature: mature});
 	}
 	return out;
@@ -2204,10 +2216,11 @@ var HELP = {
 	step:     'The garden only changes on a step - every 5 minutes on dirt, 3 on fertilizer, 15 on clay. The assistant acts then and does nothing in between.',
 	clearYes: 'Uproot them now and plant the layout. Mature ones still bank their seed as they go.',
 	clearNo:  'Leave them growing. The layout fills in around them as tiles free up on their own, and you will not be asked again for this layout.',
-	clearRow: 'The assistant will not take a plant you might still want without asking. This question covers only plants that would otherwise keep living - weeds, immortals, species you have not banked yet and anything already about to expire are never part of it.',
+	clearRow: 'The assistant will not take a plant you might still want without asking. This question covers only plants that would otherwise keep living - weeds, immortals, species you have not banked yet and anything already about to expire (harvested anyway while mature plants are) are never part of it.',
 	setBank:  'A species you have never banked is worth more than any layout, so it is harvested the moment it matures. This is the only thing that actually unlocks a seed - harvesting early banks nothing.',
 	setMature:'Take a mature plant on the last step it is certainly still alive, so the tile frees up instead of rotting. The margin is one of the plant\'s own growth steps, not a fixed slice of age: baker\'s wheat covers eight age in a step and a duketater half of one, and a duketater is not even mature until 95.',
 	setPlan:  'Sow the layout into empty tiles as they open, spending at most 15% of your cookies per step.',
+	setClearNow:'Uproot a plant the layout does not want as soon as it sprouts, instead of letting it mature first. Without this, a banked fungus that spreads into a mutation slot holds it until it matures - and seeds its neighbours meanwhile. Only species you have banked: a new one is still left to ripen, and the layout\'s own plants, immortals and weeds are never touched.',
 	setWeeds: 'Uproot meddleweed the layout has no use for - but only once it has ripened, because the fungus spore it drops when pulled scales with its age.',
 	setAsk:   'Ask before uprooting anything that would otherwise keep growing. Turn it off and the assistant clears straight through.',
 	tabLayouts:'Draw your own layouts with any seed and keep as many as you like. A layout made for a breeding recipe can be used for breeding in place of the assistant\'s.',
