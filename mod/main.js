@@ -40,7 +40,7 @@ var MODES = [
 			 'replants what expires, leaves immortals be.'},
 	{key:'unlocks', label:'Unlocks',
 		hint:'Hunts the garden upgrades that plants drop. Fills the plot with the banked species whose ' +
-			 'drop you are still missing, best chance first, and harvests it as it matures - regardless ' +
+			 'drop you are still missing, the most drops per step first, and harvests it as it matures - regardless ' +
 			 'of the harvest-mature setting, because that harvest is when the drop rolls. Stops once ' +
 			 'every drop is unlocked.'}
 ];
@@ -1092,14 +1092,18 @@ function upgradeFound(name) {
 /**
  * Every species with a drop still missing, ranked, split by whether its seed
  * is banked: {open: [...], locked: [...]}, each entry {key, name, upgrades,
- * chance, steps}. Two drops on one plant would be two rolls, so its chance is
- * the odds of either.
+ * chance, steps, rate}. Two drops on one plant would be two rolls, so its
+ * chance is the odds of either.
  *
- * The ranking is deliberately simple: the higher drop chance first, and at
- * equal chances the species that matures in fewer garden steps, since it
- * rolls more often. The whole plot goes to the top species. Each drop is an
- * independent roll with no memory, so splitting the plot between hunts does
- * not finish the set any sooner - it only delays the first one.
+ * The ranking is expected drops per garden step on a tile: the chance a
+ * mature harvest rolls, divided by the steps it takes to mature. Raw chance
+ * alone is the wrong unit, for the same reason age is (see "Growth, measured
+ * in steps"): elderwort rolls 1% but needs some 160 steps to get there, green
+ * rot rolls 0.5% every three or four, and so finds its upgrade about twenty
+ * times sooner. At an equal rate the higher raw chance wins. The whole plot
+ * goes to the top species. Each drop is an independent roll with no memory,
+ * so splitting the plot between hunts does not finish the set any sooner -
+ * it only delays the first one.
  */
 function huntList(m) {
 	var d = ensureDrops(m), open = [], locked = [];
@@ -1113,11 +1117,12 @@ function huntList(m) {
 			none *= 1 - d[key][i].chance;
 		}
 		if (!missing.length) continue;
+		var steps = Math.max(1, matureAge(p) / ageStep(p));
 		var entry = {key: key, name: p.name, upgrades: missing, chance: 1 - none,
-			steps: matureAge(p) / ageStep(p)};
+			steps: steps, rate: (1 - none) / steps};
 		(p.unlocked ? open : locked).push(entry);
 	}
-	var rank = function (a, b) { return (b.chance - a.chance) || (a.steps - b.steps); };
+	var rank = function (a, b) { return (b.rate - a.rate) || (b.chance - a.chance); };
 	open.sort(rank);
 	locked.sort(rank);
 	return {open: open, locked: locked};
@@ -2488,7 +2493,7 @@ var HELP = {
 	stopUse:  'Stop using this layout for its recipe. It stays in your library, still marked with the seed it was made for, and the assistant goes back to its own.',
 	useBreed: 'Have the assistant plant this layout in place of its own whenever it breeds this seed with this recipe on a plot this size. Any other layout in use for the same recipe is taken out of use.',
 	plantThis:'Make this the layout Plant mode grows, exactly as drawn: empty tiles are sown, expired plants replanted, immortals left be. One layout at a time - this takes the mark from any other. Switch to the Plant tab to start.',
-	unlocks:  'Some plants drop a garden upgrade when harvested mature. Which ones, and at what chance, is read out of the plants themselves at startup. The plot goes to the banked species with the best chance, at equal chances the one that matures in fewer steps, and all of it to one species at a time: every drop is a fresh roll, so splitting the plot only delays the first. A seed you have not banked is not planted - breed it first. Luck is not guessed at; the plot is simply kept planted until the game grants the upgrade.',
+	unlocks:  'Some plants drop a garden upgrade when harvested mature. Which ones, and at what chance, is read out of the plants themselves at startup. The plot goes to the banked species expected to drop the most per garden step - its chance divided by the steps it takes to mature, so a quick grower beats a slow one with better odds - and all of it to one species at a time: every drop is a fresh roll, so splitting the plot only delays the first. A seed you have not banked is not planted - breed it first. Luck is not guessed at; the plot is simply kept planted until the game grants the upgrade.',
 	stopPlant:'Stop growing this layout in Plant mode. It stays in your library; Plant mode has nothing to grow until you mark another.',
 	badge:    'The seed this layout was made for - breeding it with this recipe on a plot of this size. Green while it is in use and stands in for the assistant\'s own layout.',
 	libDefault:'The assistant\'s layout for breeding this seed on your plot as it is now. It is worked out when you open it and never saved, so it keeps up as your plot grows. Paint a tile or press any button and it becomes a layout of your own, which then takes its place here; delete that and this default comes back.',

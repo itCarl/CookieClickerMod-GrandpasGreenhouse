@@ -298,8 +298,11 @@ bakeberry's cookies or a juicy queenbeet's sugar lump are never paid out. All
 of them are put back afterwards, and `moddev/test.js` asserts nothing was
 unlocked, earned or planted, and that `main.js` names no upgrade at all.
 
-- **One species at a time, the best chance first.** At equal chances, the one
-  that matures in fewer garden steps. The whole plot goes to it: each drop is
+- **One species at a time, the most drops per step first**: the drop chance
+  divided by the garden steps the plant takes to mature. Elderwort rolls 1%
+  but takes about 160 steps to ripen; green rot rolls 0.5% every three or
+  four, so it goes first. At an equal rate the higher chance wins. The whole
+  plot goes to the top species: each drop is
   an independent roll with no memory, so splitting the plot between hunts
   finishes the set no sooner and only delays the first upgrade.
 - **Harvested the step it matures**, whatever *Harvest mature plants* says -

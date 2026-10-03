@@ -2770,13 +2770,13 @@ var MAIN_SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 
 })();
 
 (function () {
-	// (2) Only banked species with an upgrade still missing are planted, best chance first.
+	// (2) Only banked species with an upgrade still missing are planted, most drops per step first.
 	var sb = hunter(301, ['bakerWheat', 'bakeberry', 'chocoroot']);
 	sb.step();                                         // the hook's first look only takes note
 	sb.step();
 	var plan = sb.mod.getPlan();
 	ok('a plan is made', !!plan && !!plan.grid);
-	eq('it fills the plot with bakeberry, the best chance', plan && plan.grid && speciesIn(sb, plan.grid), 'bakeberry');
+	eq('it fills the plot with bakeberry, the most drops per step', plan && plan.grid && speciesIn(sb, plan.grid), 'bakeberry');
 	ok('keyed as an unlocks plan', !!plan && /^unlocks:/.test(plan.key), plan && plan.key);
 	eq('and the plot is sown with it', speciesIn(sb, plotGrid(sb)), 'bakeberry');
 
@@ -2786,10 +2786,24 @@ var MAIN_SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 
 	ok('no drop left among banked seeds: nothing is planned', !sb2.mod.getPlan() || !sb2.mod.getPlan().grid);
 	eq('and nothing is sown', sownCount(sb2), 0);
 
-	// Equal chances: the quicker to mature wins - elderwort over drowsyfern.
-	var sb3 = hunter(303, ['elderwort', 'drowsyfern', 'bakeberry'], ['Bakeberry cookies']);
+	// Ranked by drops per step, not raw chance: green rot (0.5%, matures in a
+	// few steps) outranks elderwort (1%, some 160 steps) - the test computes
+	// both rates from the plants themselves.
+	var sb3 = hunter(303, ['elderwort', 'greenRot', 'drowsyfern']);
+	function rate(k) {
+		var p = sb3.M.plants[k];
+		return DROPS[k][1] / Math.max(1, Math.max(1, Math.min(99, Math.ceil(p.mature))) / (p.ageTick + p.ageTickR / 2));
+	}
+	ok('green rot does drop more per step than elderwort (' + rate('greenRot').toExponential(2) + ' vs ' +
+		rate('elderwort').toExponential(2) + ')', rate('greenRot') > rate('elderwort') && DROPS.greenRot[1] < DROPS.elderwort[1]);
 	sb3.mod.runStepNow();
-	eq('at equal odds the faster grower is planted', speciesIn(sb3, sb3.mod.getPlan().grid), 'elderwort');
+	eq('so green rot is planted, despite its lower chance', speciesIn(sb3, sb3.mod.getPlan().grid), 'greenRot');
+
+	// Equal chances: the rate falls to the quicker grower - elderwort over drowsyfern.
+	// Baker's wheat is banked from the start and out-rolls both, so its slims are owned.
+	var sb4 = hunter(314, ['elderwort', 'drowsyfern'], ['Wheat slims']);
+	sb4.mod.runStepNow();
+	eq('at equal odds the faster grower is planted', speciesIn(sb4, sb4.mod.getPlan().grid), 'elderwort');
 })();
 
 (function () {
@@ -2853,7 +2867,8 @@ var MAIN_SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 
 	// (6) Only locked species left: the status points to breeding.
 	var sb = hunter(309, ['bakerWheat', 'chocoroot'], ['Wheat slims']);
 	sb.mod.runStepNow();
-	ok('the status names the seed to breed first', /^breed Bakeberry first to hunt its upgrade/.test(sb.mod.getStatus()),
+	// Green rot leads the locked list too: the most drops per step.
+	ok('the status names the seed to breed first', /^breed Green rot first to hunt its upgrade/.test(sb.mod.getStatus()),
 		sb.mod.getStatus());
 	ok('and how many more wait on locked seeds', /5 more/.test(sb.mod.getStatus()), sb.mod.getStatus());
 })();
