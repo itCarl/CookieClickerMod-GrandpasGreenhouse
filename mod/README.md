@@ -314,7 +314,11 @@ unlocked, earned or planted, and that `main.js` names no upgrade at all.
   it is up to you - and the next species takes its place on the next step.
 - **Everything found, nothing planted.** The status reads *all garden upgrades
   unlocked* and the plot is left alone.
-- Clearing, the spending cap and weeds work as in Breed, Boost and Plant.
+- Clearing, the spending cap and weeds work as in Breed, Boost and Plant. Only
+  the species being hunted is harvested on sight. A mature plant of another
+  species, even one whose own drop is still missing, goes through the clearing
+  question like any plant in the way, and an immortal such as an elderwort
+  field you grew is left alone unless it is the hunt.
 
 ### Boost is optimised against the real effect calculation
 

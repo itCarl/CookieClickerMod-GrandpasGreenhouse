@@ -2681,6 +2681,56 @@ function standingOf(sb, cells) {
 	sb.M.isTileUnlocked = real;
 })();
 
+(function () {
+	// (10) A plant standing on a tile drawn with a seed not banked yet stays:
+	// the tile could not be sown, so clearing it would only leave it bare.
+	var sb = plantField(186, ['everdaisy', 'bakerWheat', 'thumbcorn', 'clover']);
+	sb.mod.getSettings().askBeforeClearing = false;
+	sb.plant('clover', 1, 2);                          // mature, on a golden clover tile
+	sb.mod.runStepNow();
+	ok('banked clover on a locked golden clover tile is not up for removal',
+		!sb.mod.getRemovals().some(function (r) { return r.x === 1 && r.y === 2; }), JSON.stringify(sb.mod.getRemovals()));
+	eq('and stays', plotKey(sb, 1, 2), 'clover');
+	sb.unlock(['goldenClover']);
+	ok('once golden clover is banked it is', sb.mod.getRemovals().some(function (r) { return r.x === 1 && r.y === 2; }),
+		JSON.stringify(sb.mod.getRemovals()));
+	sb.mod.runStepNow();
+	eq('and the tile is cleared and sown as drawn', plotKey(sb, 1, 2), 'goldenClover');
+})();
+
+(function () {
+	// (11) A Plant mark naming no layout is cleared on load, so it cannot
+	// latch onto the next layout created under that name.
+	var grid = [];
+	for (var y = 0; y < 6; y++) grid.push(['', '', '', '', '', '']);
+	grid[0][0] = 'bakerWheat';
+
+	// Renamed on load: cleanName folds the doubled space.
+	var sb = library(187, ['bakerWheat']);
+	sb.mod.load(JSON.stringify({v: 2, S: {mode: 'plant', plantLayout: 'Field  Two',
+		layouts: [{name: 'Field  Two', grid: grid}]}}));
+	ok('the layout loads under its cleaned name', !!layoutNamed(sb, 'Field Two'));
+	eq('a mark on a renamed layout is cleared', sb.mod.getSettings().plantLayout, '');
+
+	// A save with no layouts key at all.
+	var sb2 = library(188, ['bakerWheat']);
+	sb2.mod.load(JSON.stringify({v: 2, S: {mode: 'plant', plantLayout: 'Ghost'}}));
+	eq('a mark with no layouts in the save is cleared', sb2.mod.getSettings().plantLayout, '');
+	sb2.mod.createLayout('Ghost');
+	eq('and a new layout of that name is not marked by it', sb2.mod.getSettings().plantLayout, '');
+
+	// A save without a mark, loaded over a session that had one.
+	var sb3 = plantField(189, ['bakerWheat']);
+	sb3.mod.load(JSON.stringify({v: 2, S: {mode: 'plant', layouts: [{name: 'Other', grid: grid}]}}));
+	eq('a session mark the loaded layouts lack is cleared', sb3.mod.getSettings().plantLayout, '');
+
+	// A valid mark survives.
+	var sb4 = library(190, ['bakerWheat']);
+	sb4.mod.load(JSON.stringify({v: 2, S: {mode: 'plant', plantLayout: 'Field',
+		layouts: [{name: 'Field', grid: grid}]}}));
+	eq('a mark on a loaded layout survives', sb4.mod.getSettings().plantLayout, 'Field');
+})();
+
 /* ------------------------------------------------------------------ *
  * 12. Unlocks mode
  *
@@ -2916,6 +2966,84 @@ var MAIN_SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 
 	ok('the Settings page names Unlocks mode', /^Working in Unlocks: /.test(hint), hint);
 	ok('and says mature plants are harvested whatever the toggle', /harvest/i.test(hint) && /regardless/.test(hint), hint);
 	ok('the CSS is sized for eight planks', /Sized for eight in a row/.test(MAIN_SRC));
+})();
+
+(function () {
+	// (9) Only the hunted species is harvested on sight. An immortal of
+	// another open species - a player's elderwort field - is left standing.
+	var sb = hunter(315, ['elderwort', 'greenRot']);
+	sb.plant('elderwort', 0, 0);                       // mature, its drop still missing
+	sb.mod.runStepNow();
+	eq('green rot is the hunt', sb.mod.getPlan() && sb.mod.getPlan().hunt && sb.mod.getPlan().hunt.key, 'greenRot');
+	sb.mod.runStepNow();
+	sb.mod.runStepNow();
+	eq('a mature elderwort off the hunt stays', plotKey(sb, 0, 0), 'elderwort');
+
+	// An immortal that is the hunt, on a tile the plan sows it on, is still taken.
+	var sb2 = hunter(316, ['elderwort'], ['Wheat slims']);
+	sb2.mod.runStepNow();
+	eq('elderwort alone is the hunt', sb2.mod.getPlan() && sb2.mod.getPlan().hunt && sb2.mod.getPlan().hunt.key, 'elderwort');
+	sb2.plant('elderwort', 0, 0);
+	var before2 = sb2.mod.getStats().harvested;
+	sb2.mod.runStepNow();
+	eq('a hunted immortal on its own tile is harvested', sb2.mod.getStats().harvested - before2, 1);
+})();
+
+(function () {
+	// (10) A mature plant of an open species that is not the hunt goes through
+	// the clearing flow, not a silent harvest.
+	var sb = hunter(317, ['bakerWheat', 'bakeberry']);
+	sb.mod.runStepNow();
+	eq('bakeberry is the hunt', sb.mod.getPlan().hunt.key, 'bakeberry');
+	sb.plant('bakerWheat', 0, 0);                      // mature, Wheat slims still missing
+	var before = sb.mod.getStats().harvested;
+	eq('Unlocks asks first', sb.mod.getClearance(), 'ask');
+	ok('about the mature wheat', sb.mod.getRemovals().some(function (r) { return r.x === 0 && r.y === 0 && r.key === 'bakerWheat'; }),
+		JSON.stringify(sb.mod.getRemovals()));
+	sb.mod.runStepNow();
+	eq('the wheat is not harvested while the question stands', plotKey(sb, 0, 0), 'bakerWheat');
+	eq('nothing was harvested', sb.mod.getStats().harvested, before);
+	sb.mod.decide('clear');
+	sb.mod.runStepNow();
+	eq('answered, the tile goes to the hunt', plotKey(sb, 0, 0), 'bakeberry');
+
+	// The hunted species is still taken the step it matures, harvestMature off.
+	var sb2 = hunter(318, ['bakerWheat', 'bakeberry']);
+	sb2.mod.getSettings().harvestMature = false;
+	sb2.mod.runStepNow();
+	sb2.plant('bakeberry', 0, 0);
+	var before2 = sb2.mod.getStats().harvested;
+	sb2.mod.runStepNow();
+	eq('the hunted species is harvested the step it matures', sb2.mod.getStats().harvested - before2, 1);
+	eq('and sown again at once', sb2.M.plot[0][0][1], 0);
+})();
+
+(function () {
+	// (11) The probe only calls hooks that drop something: another mod's
+	// wrapper around a harvest hook is never run for real.
+	var sb = library(319);
+	var calls = 0, lump = sb.M.plants.queenbeetLump, real = lump.onHarvest;
+	lump.onHarvest = function () { calls++; if (real) return real.apply(this, arguments); };
+	var drops = sb.mod.getDrops() || {};
+	eq('a foreign wrapper is not called by the probe', calls, 0);
+	eq('every drop is still found', Object.keys(drops).sort().join(','), Object.keys(DROPS).sort().join(','));
+})();
+
+(function () {
+	// (12) A probed hook that throws on the stubs is reported, and the rest of the table stands.
+	var sb = library(320);
+	sb.M.plants.clover.onHarvest = function () {
+		if (!this) M.dropUpgrade('never', 1);
+		throw new Error('stub trouble');
+	};
+	var warns = [], realWarn = console.warn;
+	console.warn = function () { warns.push(Array.prototype.join.call(arguments, ' ')); };
+	var drops;
+	try { drops = sb.mod.getDrops() || {}; } finally { console.warn = realWarn; }
+	ok('the throw is warned about, naming the plant', warns.some(function (w) {
+		return /Grandpa's Greenhouse/.test(w) && /clover/.test(w);
+	}), warns.join(' | '));
+	eq('and the rest of the table is whole', Object.keys(drops).sort().join(','), Object.keys(DROPS).sort().join(','));
 })();
 
 /* ------------------------------------------------------------------ */

@@ -1031,16 +1031,19 @@ function planBoost(m, objKey) {
  * A few plants drop a garden upgrade when harvested mature. Nothing on the
  * plant object says which: the drop is one line inside its onHarvest, a call
  * to M.dropUpgrade(name, chance). So, as with getMuts, the game is asked
- * rather than transcribed - each plant's own onHarvest is called once, as if
- * harvested at maturity, with M.dropUpgrade swapped for a recorder. If Orteil
- * adds a drop or retunes one, this follows without an edit.
+ * rather than transcribed - each plant's own onHarvest whose source names
+ * dropUpgrade is called once, as if harvested at maturity, with M.dropUpgrade
+ * swapped for a recorder. If Orteil adds a drop or retunes one, this follows
+ * without an edit. A hook that does not name it is never called: it cannot
+ * drop anything, and if another mod wrapped it, the wrapper lives outside
+ * Game and the garden where no stub reaches.
  *
- * Called for real, a harvest hook pays out: a bakeberry earns cookies, a
- * juicy queenbeet finds a sugar lump. So for the length of the probe every
- * function on Game and on the garden is swapped for one that does nothing,
- * and every one is put back in the finally, whatever the hooks did. They run
- * synchronously, so nothing else in the game can see the swap. A hook that
- * throws on the stubs has still recorded any drop it reached before it threw.
+ * Called for real, a harvest hook pays out: a bakeberry earns cookies. So for
+ * the length of the probe every function on Game and on the garden is swapped
+ * for one that does nothing, and every one is put back in the finally,
+ * whatever the hooks did. They run synchronously, so nothing else in the game
+ * can see the swap. A hook that throws on the stubs has still recorded any
+ * drop it reached before it threw, and the console names the plant.
  */
 function buildDrops(m) {
 	var found = {}, current = null, swapped = [];
@@ -1062,8 +1065,15 @@ function buildDrops(m) {
 		for (var key in m.plants) {
 			var p = m.plants[key];
 			if (typeof p.onHarvest !== 'function') continue;
+			if (String(p.onHarvest).indexOf('dropUpgrade') < 0) continue;
 			current = key;
-			try { p.onHarvest(0, 0, matureAge(p)); } catch (err) { /* see above */ }
+			try {
+				p.onHarvest(0, 0, matureAge(p));
+			} catch (err) {
+				// Any drop it reached before throwing is recorded; one after is lost
+				// until a reload, so say which plant.
+				console.warn('[Grandpa\'s Greenhouse] reading the drops of ' + key + ' failed:', err);
+			}
 		}
 	} finally {
 		current = null;
@@ -1128,12 +1138,27 @@ function huntList(m) {
 	return {open: open, locked: locked};
 }
 
-/** The species Unlocks mode harvests the moment they mature, as a set; null in any other mode. */
-function huntSet(m) {
-	if (S.mode !== 'unlocks') return null;
-	var h = huntList(m), out = {};
-	for (var i = 0; i < h.open.length; i++) out[h.open[i].key] = true;
-	return out;
+/**
+ * The one species Unlocks mode harvests the moment it matures: the one its
+ * plan hunts. '' in any other mode, or with nothing to hunt. Other open
+ * species with a drop missing are not taken on sight - a field the player
+ * grew of them is theirs, and goes through the clearing flow like any other
+ * plant in the way.
+ */
+function huntKey() {
+	if (S.mode !== 'unlocks' || !plan || !plan.hunt) return '';
+	return plan.hunt.key;
+}
+
+/**
+ * Whether Unlocks mode takes the mature plant `p` on (x, y) without asking:
+ * it is the hunted species, and an immortal one only where the plan sows it -
+ * an immortal is otherwise never touched.
+ */
+function huntHarvests(p, x, y) {
+	var hunt = huntKey();
+	if (!hunt || p.key !== hunt) return false;
+	return !p.immortal || !!(plan.grid && plan.grid[y][x] === p.key);
 }
 
 function upgradeCount(list) {
@@ -1956,7 +1981,10 @@ function plantAt(m, p, x, y, budget) {
  * anyway. With that setting off nothing else would take it, so it is listed
  * like any other.
  *
- * In Unlocks mode a mature plant of a hunted species is never listed either:
+ * Nor is a plant on a tile the layout draws with a seed not banked yet:
+ * runStep cannot sow that tile, so clearing it would only leave it bare.
+ *
+ * In Unlocks mode a mature plant of the hunted species is never listed either:
  * runStep harvests it without asking, because that harvest rolls its drop.
  */
 function removalsFor(m) {
@@ -1964,17 +1992,19 @@ function removalsFor(m) {
 	if (!layoutMode()) return out;
 	if (!plan || !plan.grid || !S.keepPlan) return out;
 
-	var grid = plan.grid, nursery = !!plan.nursery, tiles = unlockedTiles(m), hunting = huntSet(m);
+	var grid = plan.grid, nursery = !!plan.nursery, tiles = unlockedTiles(m);
 	for (var t = 0; t < tiles.length; t++) {
 		var x = tiles[t][0], y = tiles[t][1], tile = m.plot[y][x];
 		var p = plantOf(m, tile);
 		if (!p || p.immortal || p.weed || !p.unlocked) continue;
 		if (grid[y][x] === p.key) continue;
+		var want = grid[y][x] ? m.plants[grid[y][x]] : null;
+		if (want && !want.unlocked) continue;
 
 		var age = tile[1], mature = age >= p.mature;
 		if (!mature && !nursery && !S.clearImmediately) continue;
 		if (mature && age >= harvestAgeOf(p) && S.harvestMature) continue;
-		if (mature && hunting && hunting[p.key]) continue;
+		if (mature && huntHarvests(p, x, y)) continue;
 		out.push({x: x, y: y, key: p.key, name: p.name, mature: mature});
 	}
 	return out;
@@ -2003,7 +2033,6 @@ function runStep(m) {
 	var grid = layoutMode() ? (plan && plan.grid) : null;
 	var nursery = !!(plan && plan.nursery);
 	var tiles = unlockedTiles(m);
-	var hunting = huntSet(m);
 	var t, x, y;
 
 	// Uprooting is the only thing here a player can lose work to, so it is the
@@ -2032,10 +2061,11 @@ function runStep(m) {
 		if (!p.unlocked) continue;
 
 		// Unlocks mode exists for this harvest: a drop only rolls when a
-		// mature plant is harvested, so a hunted species is taken the step it
+		// mature plant is harvested, so the hunted species is taken the step it
 		// matures, whatever harvestMature says - and its tile is sown again
-		// below, in the same step.
-		if (hunting && mature && hunting[p.key]) { harvestAt(m, x, y); continue; }
+		// below, in the same step. Other species fall through to the clearing
+		// flow, however much their own drop is missing.
+		if (mature && huntHarvests(p, x, y)) { harvestAt(m, x, y); continue; }
 
 		if (p.weed) {
 			// Meddleweed is the gateway to the whole fungus branch: uprooting it
@@ -3564,6 +3594,10 @@ function loadString(str) {
 			if (l.use === true || (legacy && l.use === undefined)) claimRecipe(lay);
 		}
 	}
+	// A Plant mark naming no layout - renamed above by cleanName or
+	// uniqueName, or left over from a save without layouts or without a mark -
+	// would otherwise latch onto the next layout created under that name.
+	if (S.plantLayout && !layoutByName(S.plantLayout)) S.plantLayout = '';
 	plan = null;
 }
 
